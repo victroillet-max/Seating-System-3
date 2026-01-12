@@ -87,9 +87,21 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'Guest ID required' }, { status: 400 });
     }
     
-    // Delete related assignments and arrivals
+    // Delete all related records (cascade delete)
     await sql`DELETE FROM assignments WHERE guest_id = ${id}`;
     await sql`DELETE FROM arrivals WHERE guest_id = ${id}`;
+    await sql`DELETE FROM departures WHERE guest_id = ${id}`;
+    await sql`DELETE FROM group_memberships WHERE guest_id = ${id}`;
+    await sql`DELETE FROM member_arrivals WHERE member_id = ${id}`;
+    
+    // Remove from groups where this guest is the lead
+    const leadGroups = await sql`SELECT id FROM groups WHERE lead_guest_id = ${id}`;
+    for (const group of leadGroups.rows) {
+      await sql`DELETE FROM group_memberships WHERE group_id = ${group.id}`;
+      await sql`DELETE FROM groups WHERE id = ${group.id}`;
+    }
+    
+    // Finally delete the guest
     await sql`DELETE FROM guests WHERE id = ${id}`;
     
     return NextResponse.json({ success: true });

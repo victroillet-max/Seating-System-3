@@ -147,6 +147,18 @@ export async function initializeDatabase() {
       )
     `;
 
+    // Create departures table
+    await sql`
+      CREATE TABLE IF NOT EXISTS departures (
+        id SERIAL PRIMARY KEY,
+        guest_id INTEGER NOT NULL,
+        day VARCHAR(10) NOT NULL,
+        service_id INTEGER NOT NULL,
+        departed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(guest_id, day, service_id)
+      )
+    `;
+
     return { success: true };
   } catch (error) {
     console.error('Database initialization error:', error);
