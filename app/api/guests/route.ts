@@ -6,7 +6,9 @@ export async function GET() {
     const result = await sql`
       SELECT id, name, COALESCE(party_size, 1) as "partySize", notes, 
              COALESCE(is_ghost, false) as "isGhost",
-             COALESCE(is_manually_added, false) as "isManuallyAdded"
+             COALESCE(is_manually_added, false) as "isManuallyAdded",
+             market,
+             guest_type as "guestType"
       FROM guests 
       ORDER BY created_at DESC
     `;
@@ -20,13 +22,15 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, notes, isManuallyAdded } = body;
+    const { name, notes, isManuallyAdded, market, guestType } = body;
     
     const result = await sql`
-      INSERT INTO guests (name, party_size, notes, is_ghost, is_manually_added)
-      VALUES (${name}, 1, ${notes || ''}, false, ${isManuallyAdded || false})
+      INSERT INTO guests (name, party_size, notes, is_ghost, is_manually_added, market, guest_type)
+      VALUES (${name}, 1, ${notes || ''}, false, ${isManuallyAdded || false}, ${market || null}, ${guestType || null})
       RETURNING id, name, party_size as "partySize", notes, is_ghost as "isGhost", 
-                COALESCE(is_manually_added, false) as "isManuallyAdded"
+                COALESCE(is_manually_added, false) as "isManuallyAdded",
+                market,
+                guest_type as "guestType"
     `;
     
     return NextResponse.json(result.rows[0]);
@@ -39,7 +43,7 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, name, partySize, notes, isGhost } = body;
+    const { id, name, partySize, notes, isGhost, market, guestType } = body;
     
     if (!id) {
       return NextResponse.json({ error: 'Guest ID required' }, { status: 400 });
@@ -64,9 +68,20 @@ export async function PUT(request: NextRequest) {
         WHERE id = ${id}
       `;
     }
+
+    if (market !== undefined || guestType !== undefined) {
+      await sql`
+        UPDATE guests 
+        SET 
+          market = COALESCE(${market}, market),
+          guest_type = COALESCE(${guestType}, guest_type)
+        WHERE id = ${id}
+      `;
+    }
     
     const result = await sql`
-      SELECT id, name, party_size as "partySize", notes, COALESCE(is_ghost, false) as "isGhost"
+      SELECT id, name, party_size as "partySize", notes, COALESCE(is_ghost, false) as "isGhost",
+             market, guest_type as "guestType"
       FROM guests 
       WHERE id = ${id}
     `;

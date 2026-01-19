@@ -123,6 +123,26 @@ export async function initializeDatabase() {
       // Column might already exist, ignore error
     }
 
+    // Migration: Add market column to guests table
+    try {
+      await sql`
+        ALTER TABLE guests 
+        ADD COLUMN IF NOT EXISTS market VARCHAR(255)
+      `;
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
+
+    // Migration: Add guest_type column to guests table
+    try {
+      await sql`
+        ALTER TABLE guests 
+        ADD COLUMN IF NOT EXISTS guest_type VARCHAR(255)
+      `;
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
+
     // Create arrivals table
     await sql`
       CREATE TABLE IF NOT EXISTS arrivals (

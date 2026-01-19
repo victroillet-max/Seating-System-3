@@ -36,8 +36,24 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, x, y } = body;
+    const { id, x, y, name, capacity } = body;
     
+    // If name or capacity is provided, update those fields
+    if (name !== undefined || capacity !== undefined) {
+      const result = await sql`
+        UPDATE tables 
+        SET 
+          name = COALESCE(${name}, name),
+          capacity = COALESCE(${capacity}, capacity),
+          x = COALESCE(${x}, x),
+          y = COALESCE(${y}, y)
+        WHERE id = ${id}
+        RETURNING id, name, capacity, x, y
+      `;
+      return NextResponse.json(result.rows[0]);
+    }
+    
+    // Otherwise just update position (backward compatible)
     const result = await sql`
       UPDATE tables 
       SET x = ${x}, y = ${y}

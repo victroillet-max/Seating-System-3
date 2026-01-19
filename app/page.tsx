@@ -8,6 +8,8 @@ interface Guest {
   id: number;
   name: string;
   notes: string;
+  market?: string;
+  guestType?: string;
   isGhost?: boolean;
   isManuallyAdded?: boolean;
 }
@@ -88,7 +90,11 @@ function RoomMap({
   highlightForReassign, 
   isTableBlocked,
   hasDeparted,
-  services
+  services,
+  height = 500,
+  highlightRelocateSource,
+  highlightRelocateTarget,
+  isMultiRelocate
 }: {
   tables: Table[];
   guests: Guest[];
@@ -103,6 +109,10 @@ function RoomMap({
   isTableBlocked?: (tableId: number, serviceId: number) => boolean;
   hasDeparted?: (guestId: number, serviceId: number) => boolean;
   services?: Service[];
+  height?: number;
+  highlightRelocateSource?: number | null;
+  highlightRelocateTarget?: boolean;
+  isMultiRelocate?: boolean;
 }) {
   const [dragging, setDragging] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -195,7 +205,7 @@ function RoomMap({
     <div 
       ref={containerRef}
       className="relative bg-gradient-to-br from-gray-100 to-gray-200 rounded-xl border-2 border-gray-300 overflow-hidden"
-      style={{ width: '100%', height: isEditor ? '500px' : '400px' }}
+      style={{ width: '100%', height: `${height}px` }}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
@@ -222,8 +232,9 @@ function RoomMap({
         const allArrived = uniqueGuestIds.length > 0 && uniqueGuestIds.every(id => hasArrived ? hasArrived(id) : false);
         const someArrived = uniqueGuestIds.some(id => hasArrived ? hasArrived(id) : false);
         const isEmpty = uniqueGuestIds.length === 0;
-        const isSourceTable = highlightForReassign === table.id;
-        const isValidTarget = highlightForReassign && highlightForReassign !== table.id;
+        const isSourceTable = highlightForReassign === table.id || highlightRelocateSource === table.id;
+        const isValidTarget = (highlightForReassign && highlightForReassign !== table.id) || 
+          (highlightRelocateTarget && highlightRelocateSource !== table.id);
         const isBlocked = isTableBlocked ? isTableBlocked(table.id, selectedService) : false;
         const isDraggingThis = dragging === table.id;
         const pos = getTablePosition(table);
@@ -286,15 +297,17 @@ function RoomMap({
               isDraggingThis ? 'ring-4 ring-red-700 shadow-2xl z-20 scale-105' : 'z-10'
             } ${
               isSourceTable
-                ? 'ring-4 ring-orange-500 opacity-50'
+                ? isMultiRelocate ? 'ring-4 ring-blue-500 opacity-50' : 'ring-4 ring-orange-500 opacity-50'
                 : isValidTarget && !isBlocked
-                ? 'ring-4 ring-orange-400 hover:ring-orange-500 animate-pulse'
+                ? isMultiRelocate ? 'ring-4 ring-blue-400 animate-pulse' : 'ring-4 ring-orange-400 hover:ring-orange-500 animate-pulse'
                 : ''
             } ${
               isBlocked
                 ? 'bg-red-200 text-red-700 opacity-60'
                 : isEmpty 
                 ? 'bg-white text-gray-600 border-2 border-gray-300' 
+                : allDeparted
+                ? 'bg-gray-300 text-gray-600 border-2 border-gray-400'
                 : allArrived 
                 ? 'bg-green-500 text-white' 
                 : someArrived 
@@ -315,8 +328,8 @@ function RoomMap({
             <div className="font-bold text-sm">{table.name}</div>
             <div className="text-xs opacity-90">{occupancy}/{table.capacity}</div>
             {!isEmpty && (
-              <div className="text-xs mt-1 font-medium">
-                {assignedGuestIds.filter(id => hasArrived ? hasArrived(id) : false).length}/{uniqueGuestIds.length} ✓
+              <div className="text-xs mt-0.5 font-medium">
+                {uniqueGuestIds.filter(id => hasArrived ? hasArrived(id) : false).length}✓ {departedCount > 0 && `${departedCount}↗`}
               </div>
             )}
           </div>
@@ -324,22 +337,26 @@ function RoomMap({
       })}
 
       {/* Legend */}
-      <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur rounded-lg p-3 text-xs space-y-1.5 shadow-lg">
+      <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur rounded-lg p-2.5 text-xs space-y-1 shadow-lg">
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-white border-2 border-gray-300" />
+          <div className="w-3 h-3 rounded bg-white border-2 border-gray-300" />
           <span className="text-gray-600">Empty</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-red-700" />
-          <span className="text-gray-600">Assigned</span>
+          <div className="w-3 h-3 rounded bg-red-700" />
+          <span className="text-gray-600">Waiting</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-yellow-400" />
-          <span className="text-gray-600">Partial arrivals</span>
+          <div className="w-3 h-3 rounded bg-yellow-400" />
+          <span className="text-gray-600">Partial</span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="w-4 h-4 rounded bg-green-500" />
+          <div className="w-3 h-3 rounded bg-green-500" />
           <span className="text-gray-600">All arrived</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded bg-gray-300" />
+          <span className="text-gray-600">All left</span>
         </div>
         {isEditor && (
           <div className="flex items-center gap-2 pt-1 border-t">
@@ -348,6 +365,25 @@ function RoomMap({
           </div>
         )}
       </div>
+
+      {/* Availability Legend */}
+      {!isEditor && (
+        <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur rounded-lg p-2.5 text-xs shadow-lg">
+          <div className="font-medium text-gray-700 mb-1">Next Service</div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-green-400" />
+            <span className="text-gray-600">Available</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-orange-400" />
+            <span className="text-gray-600">Clearing</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full bg-red-500" />
+            <span className="text-gray-600">Occupied</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -356,23 +392,48 @@ function RoomEditor({
   tables, 
   onTableDrag, 
   onAddTable, 
+  onEditTable,
   onRemoveTable, 
   onClose 
 }: {
   tables: Table[];
   onTableDrag: (tableId: number, x: number, y: number) => void;
   onAddTable: (name: string, capacity: number) => void;
+  onEditTable: (tableId: number, name: string, capacity: number) => void;
   onRemoveTable: (tableId: number) => void;
   onClose: () => void;
 }) {
   const [newTableName, setNewTableName] = useState('');
   const [newTableCapacity, setNewTableCapacity] = useState(6);
+  const [editingTable, setEditingTable] = useState<Table | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editCapacity, setEditCapacity] = useState(6);
 
   const handleAddTable = () => {
     if (!newTableName.trim()) return;
     onAddTable(newTableName.trim(), newTableCapacity);
     setNewTableName('');
     setNewTableCapacity(6);
+  };
+
+  const handleStartEdit = (table: Table) => {
+    setEditingTable(table);
+    setEditName(table.name);
+    setEditCapacity(table.capacity);
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingTable || !editName.trim()) return;
+    onEditTable(editingTable.id, editName.trim(), editCapacity);
+    setEditingTable(null);
+    setEditName('');
+    setEditCapacity(6);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingTable(null);
+    setEditName('');
+    setEditCapacity(6);
   };
 
   return (
@@ -430,12 +491,22 @@ function RoomEditor({
           <div className="mt-4">
             <h4 className="font-medium text-sm text-gray-700 mb-2">Tables ({tables.length})</h4>
             <div className="flex flex-wrap gap-2">
-              {tables.map(table => (
+              {[...tables].sort((a, b) => 
+                a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+              ).map(table => (
                 <div key={table.id} className="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg text-sm">
                   <span>{table.name} ({table.capacity})</span>
                   <button
+                    onClick={() => handleStartEdit(table)}
+                    className="text-blue-500 hover:text-blue-700"
+                    title="Edit table"
+                  >
+                    <Edit2 size={14} />
+                  </button>
+                  <button
                     onClick={() => onRemoveTable(table.id)}
                     className="text-red-500 hover:text-red-700"
+                    title="Delete table"
                   >
                     <X size={14} />
                   </button>
@@ -443,6 +514,51 @@ function RoomEditor({
               ))}
             </div>
           </div>
+
+          {/* Edit Table Modal */}
+          {editingTable && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60]">
+              <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm">
+                <h4 className="font-semibold text-lg mb-4">Edit Table</h4>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Table Name</label>
+                    <input
+                      type="text"
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                      placeholder="Enter table name"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Capacity</label>
+                    <input
+                      type="number"
+                      value={editCapacity}
+                      onChange={(e) => setEditCapacity(parseInt(e.target.value) || 1)}
+                      className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                      min="1"
+                    />
+                  </div>
+                  <div className="flex gap-2 justify-end pt-2">
+                    <button
+                      onClick={handleCancelEdit}
+                      className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleSaveEdit}
+                      className="px-4 py-2 text-sm bg-red-700 text-white rounded-lg hover:bg-red-800 transition"
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="p-4 border-t flex justify-end">
@@ -501,7 +617,6 @@ function WaiterView({
   const [relocatingGuest, setRelocatingGuest] = useState<{ guest: Guest; fromTableId: number } | null>(null);
   const [relocatingMultiple, setRelocatingMultiple] = useState<{ guests: Guest[]; fromTableId: number } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const containerRef = React.useRef<HTMLDivElement>(null);
 
   const currentService = services.find(s => s.id === selectedService) || services[0];
   const previousService = services.find(s => s.id === selectedService - 1);
@@ -722,121 +837,22 @@ function WaiterView({
               <LayoutGrid size={18} />
               Room Layout
             </h3>
-            <div 
-              ref={containerRef}
-              className="relative bg-gradient-to-br from-gray-50 to-gray-100 rounded-xl border-2 border-gray-200 overflow-hidden"
-              style={{ height: '500px' }}
-            >
-              {/* Grid pattern */}
-              <div className="absolute inset-0 opacity-20">
-                <svg width="100%" height="100%">
-                  <defs>
-                    <pattern id="waiter-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-                      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="gray" strokeWidth="0.5"/>
-                    </pattern>
-                  </defs>
-                  <rect width="100%" height="100%" fill="url(#waiter-grid)" />
-                </svg>
-              </div>
-              
-              {tableStatuses.map(status => {
-                const { table, arrivedCount, totalCount, isBlocked, availabilityStatus, departedCount } = status;
-                const allArrived = totalCount > 0 && arrivedCount === totalCount;
-                const someArrived = arrivedCount > 0 && arrivedCount < totalCount;
-                const allLeft = totalCount > 0 && departedCount === totalCount;
-                const isRelocateTarget = (relocatingGuest && relocatingGuest.fromTableId !== table.id) ||
-                  (relocatingMultiple && relocatingMultiple.fromTableId !== table.id);
-                const isRelocateSource = relocatingGuest?.fromTableId === table.id || 
-                  relocatingMultiple?.fromTableId === table.id;
-                const isMultiRelocate = !!relocatingMultiple;
-
-                // Determine table color
-                let bgColor = 'bg-white border-2 border-gray-300 text-gray-600'; // Empty
-                if (isBlocked) {
-                  bgColor = 'bg-red-200 text-red-700 border-2 border-red-300';
-                } else if (totalCount > 0) {
-                  if (allLeft) {
-                    bgColor = 'bg-gray-300 text-gray-600 border-2 border-gray-400'; // All left
-                  } else if (allArrived) {
-                    bgColor = 'bg-green-500 text-white border-2 border-green-600';
-                  } else if (someArrived) {
-                    bgColor = 'bg-yellow-400 text-gray-800 border-2 border-yellow-500';
-                  } else {
-                    bgColor = 'bg-red-700 text-white border-2 border-red-800';
-                  }
-                }
-
-                // Availability indicator
-                let availabilityDot = null;
-                if (availabilityStatus === 'clearing') {
-                  availabilityDot = <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-400 rounded-full border-2 border-white animate-pulse" />;
-                } else if (availabilityStatus === 'free' && totalCount === 0) {
-                  availabilityDot = <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white" />;
-                }
-
-                return (
-                  <div
-                    key={table.id}
-                    onClick={() => handleTableClick(table)}
-                    className={`absolute flex flex-col items-center justify-center rounded-xl shadow-lg cursor-pointer transition-all hover:scale-105 ${bgColor} ${
-                      isRelocateTarget ? (isMultiRelocate ? 'ring-4 ring-blue-400 animate-pulse' : 'ring-4 ring-orange-400 animate-pulse') : ''
-                    } ${isRelocateSource ? (isMultiRelocate ? 'ring-4 ring-blue-500 opacity-50' : 'ring-4 ring-orange-500 opacity-50') : ''}`}
-                    style={{
-                      left: `${Math.min(table.x, (containerRef.current?.clientWidth || 600) - 90)}px`,
-                      top: `${Math.min(table.y, 410)}px`,
-                      width: '85px',
-                      height: '85px'
-                    }}
-                  >
-                    {availabilityDot}
-                    <div className="font-bold text-sm">{table.name}</div>
-                    <div className="text-xs opacity-90">{totalCount}/{table.capacity}</div>
-                    {totalCount > 0 && (
-                      <div className="text-xs mt-0.5 font-medium">
-                        {arrivedCount}✓ {departedCount > 0 && `${departedCount}↗`}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-
-              {/* Legend */}
-              <div className="absolute bottom-3 left-3 bg-white/95 backdrop-blur rounded-lg p-2.5 text-xs space-y-1 shadow-lg">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-white border-2 border-gray-300" />
-                  <span className="text-gray-600">Empty</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-red-700" />
-                  <span className="text-gray-600">Waiting</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-yellow-400" />
-                  <span className="text-gray-600">Partial</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-green-500" />
-                  <span className="text-gray-600">All arrived</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded bg-gray-300" />
-                  <span className="text-gray-600">All left</span>
-                </div>
-              </div>
-
-              {/* Availability Legend */}
-              <div className="absolute bottom-3 right-3 bg-white/95 backdrop-blur rounded-lg p-2.5 text-xs shadow-lg">
-                <div className="font-medium text-gray-700 mb-1">Availability</div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-green-400" />
-                  <span className="text-gray-600">Free</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-orange-400" />
-                  <span className="text-gray-600">Clearing</span>
-                </div>
-              </div>
-            </div>
+            <RoomMap
+              tables={tables}
+              guests={guests}
+              assignments={assignments}
+              selectedDay={selectedDay}
+              selectedService={selectedService}
+              onTableClick={handleTableClick}
+              hasArrived={hasArrived}
+              isTableBlocked={isTableBlocked}
+              hasDeparted={hasDeparted}
+              services={services}
+              height={500}
+              highlightRelocateSource={relocatingGuest?.fromTableId || relocatingMultiple?.fromTableId || null}
+              highlightRelocateTarget={!!(relocatingGuest || relocatingMultiple)}
+              isMultiRelocate={!!relocatingMultiple}
+            />
           </div>
 
           {/* Quick Stats & Tables List */}
@@ -1009,6 +1025,18 @@ function WaiterView({
                                 {groupInfo.isLead ? 'Group lead' : `In ${groupInfo.group.leadGuestName}'s group`}
                               </div>
                             )}
+                            <div className="flex flex-wrap gap-1.5 mt-1">
+                              {guest.market && (
+                                <span className="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-medium">
+                                  {guest.market}
+                                </span>
+                              )}
+                              {guest.guestType && (
+                                <span className="text-xs px-2 py-0.5 bg-indigo-100 text-indigo-700 rounded-full font-medium">
+                                  {guest.guestType}
+                                </span>
+                              )}
+                            </div>
                             {guest.notes && (
                               <div className="text-sm text-gray-500 mt-0.5">{guest.notes}</div>
                             )}
@@ -1333,7 +1361,7 @@ export default function SeatingManager() {
   const [showWeekOverview, setShowWeekOverview] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [guestFilter, setGuestFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
-  const [guestSort, setGuestSort] = useState<'name' | 'size'>('name');
+  const [guestSort, setGuestSort] = useState<'name' | 'size' | 'market' | 'guestType'>('name');
   const [showOvercapacityAlert, setShowOvercapacityAlert] = useState(false);
   const [overcapacityTable, setOvercapacityTable] = useState<{table: Table, guests: Guest[], over: number} | null>(null);
   const [guestListCollapsed, setGuestListCollapsed] = useState(false);
@@ -1409,6 +1437,11 @@ export default function SeatingManager() {
     serviceId: number;
     isGroupMember?: boolean;
   } | null>(null);
+
+  // Delete all guests modal state
+  const [showDeleteAllModal, setShowDeleteAllModal] = useState(false);
+  const [deleteConfirmStep, setDeleteConfirmStep] = useState<1 | 2>(1);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
   const showNotification = (message: string, type = 'success') => {
     setNotification({ message, type });
@@ -2078,30 +2111,103 @@ export default function SeatingManager() {
       const worksheet = workbook.Sheets[sheetName];
       const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as string[][];
       
-      // First pass: count valid rows
-      const validRows: { name: string; notes: string }[] = [];
-      let skippedHeader = false;
+      // Find header row and column indices
+      let headerRowIndex = -1;
+      let columnIndices = {
+        lastName: -1,
+        firstName: -1,
+        market: -1,
+        guestType: -1,
+        foodAllergies: -1,
+        name: -1  // Fallback for simple name column
+      };
       
-      for (let i = 0; i < jsonData.length; i++) {
+      // Look for header row in first few rows
+      for (let i = 0; i < Math.min(5, jsonData.length); i++) {
+        const row = jsonData[i];
+        if (!row) continue;
+        
+        for (let j = 0; j < row.length; j++) {
+          const cell = String(row[j] || '').toLowerCase().trim();
+          
+          if (cell === 'last name' || cell === 'last_name' || cell === 'lastname') {
+            columnIndices.lastName = j;
+            headerRowIndex = i;
+          }
+          if (cell === 'first name' || cell === 'first_name' || cell === 'firstname') {
+            columnIndices.firstName = j;
+            headerRowIndex = i;
+          }
+          if (cell === 'market') {
+            columnIndices.market = j;
+            headerRowIndex = i;
+          }
+          if (cell === 'type of guest' || cell === 'guest type' || cell === 'guest_type' || cell === 'type') {
+            columnIndices.guestType = j;
+            headerRowIndex = i;
+          }
+          if (cell.includes('food') && (cell.includes('allerg') || cell.includes('intolerance'))) {
+            columnIndices.foodAllergies = j;
+            headerRowIndex = i;
+          }
+          if (cell === 'name' || cell === 'guest' || cell === 'nom' || cell === 'guests') {
+            columnIndices.name = j;
+            headerRowIndex = i;
+          }
+        }
+        
+        // If we found key columns, stop looking
+        if (columnIndices.lastName >= 0 || columnIndices.name >= 0) break;
+      }
+      
+      // First pass: count valid rows
+      const validRows: { name: string; notes: string; market: string; guestType: string }[] = [];
+      const startRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 0;
+      
+      for (let i = startRow; i < jsonData.length; i++) {
         const row = jsonData[i];
         if (!row || row.length === 0) continue;
         
-        const name = String(row[0] || '').trim();
-        if (!name) continue;
+        let name = '';
+        let notes = '';
+        let market = '';
+        let guestType = '';
         
-        // Skip header row if it looks like a header
-        if (!skippedHeader && (
-          name.toLowerCase() === 'name' || 
-          name.toLowerCase() === 'guest' || 
-          name.toLowerCase() === 'nom' ||
-          name.toLowerCase() === 'guests'
-        )) {
-          skippedHeader = true;
-          continue;
+        // Build name from first name + last name or single name column
+        if (columnIndices.firstName >= 0 && columnIndices.lastName >= 0) {
+          const firstName = String(row[columnIndices.firstName] || '').trim();
+          const lastName = String(row[columnIndices.lastName] || '').trim();
+          name = `${firstName} ${lastName}`.trim();
+        } else if (columnIndices.name >= 0) {
+          name = String(row[columnIndices.name] || '').trim();
+        } else if (columnIndices.lastName >= 0) {
+          name = String(row[columnIndices.lastName] || '').trim();
+        } else {
+          // Fallback to first column
+          name = String(row[0] || '').trim();
         }
         
-        const notes = row[1] ? String(row[1]).trim() : '';
-        validRows.push({ name, notes });
+        if (!name) continue;
+        
+        // Get market
+        if (columnIndices.market >= 0) {
+          market = String(row[columnIndices.market] || '').trim();
+        }
+        
+        // Get guest type
+        if (columnIndices.guestType >= 0) {
+          guestType = String(row[columnIndices.guestType] || '').trim();
+        }
+        
+        // Get food allergies as notes
+        if (columnIndices.foodAllergies >= 0) {
+          notes = String(row[columnIndices.foodAllergies] || '').trim();
+        } else if (headerRowIndex < 0 && row[1]) {
+          // Fallback to second column if no header detected
+          notes = String(row[1]).trim();
+        }
+        
+        validRows.push({ name, notes, market, guestType });
       }
       
       setImportProgress({ current: 0, total: validRows.length });
@@ -2113,12 +2219,12 @@ export default function SeatingManager() {
       for (let i = 0; i < validRows.length; i += batchSize) {
         const batch = validRows.slice(i, i + batchSize);
         
-        const batchPromises = batch.map(async ({ name, notes }) => {
+        const batchPromises = batch.map(async ({ name, notes, market, guestType }) => {
           try {
             const response = await fetch('/api/guests', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name, notes })
+              body: JSON.stringify({ name, notes, market, guestType })
             });
             return await response.json();
           } catch (error) {
@@ -2391,6 +2497,24 @@ export default function SeatingManager() {
     } catch (error) {
       console.error('Error adding table:', error);
       showNotification('Failed to add table', 'error');
+    }
+  };
+
+  const handleEditTable = async (tableId: number, name: string, capacity: number) => {
+    try {
+      const response = await fetch('/api/tables', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: tableId, name, capacity })
+      });
+      const updatedTable = await response.json();
+      setTables(prev => prev.map(t => 
+        t.id === tableId ? { ...t, name: updatedTable.name, capacity: updatedTable.capacity } : t
+      ));
+      showNotification(`${name} updated`);
+    } catch (error) {
+      console.error('Error updating table:', error);
+      showNotification('Failed to update table', 'error');
     }
   };
 
@@ -3199,7 +3323,7 @@ export default function SeatingManager() {
       const dayData: any[][] = [
         [`${day.name} - Detailed Attendance`],
         [],
-        ['Guest Name', 'Group Size', 'Service', 'Table', 'Arrived', 'Ghost', 'Notes']
+        ['Guest Name', 'Group Size', 'Service', 'Table', 'Arrived', 'Ghost', 'Market', 'Guest Type', 'Notes']
       ];
 
       services.forEach(service => {
@@ -3224,6 +3348,8 @@ export default function SeatingManager() {
                   table?.name || 'Unknown',
                   arrived,
                   guest.isGhost ? 'Yes' : 'No',
+                  guest.market || '',
+                  guest.guestType || '',
                   guest.notes || ''
                 ]);
               }
@@ -3313,7 +3439,7 @@ export default function SeatingManager() {
     const detailData: any[][] = [
       [`${day.name} - Detailed Attendance`],
       [],
-      ['Guest Name', 'Group Size', 'Service', 'Table', 'Arrived', 'Ghost', 'Notes']
+      ['Guest Name', 'Group Size', 'Service', 'Table', 'Arrived', 'Ghost', 'Market', 'Guest Type', 'Notes']
     ];
 
     services.forEach(service => {
@@ -3338,6 +3464,8 @@ export default function SeatingManager() {
                 table?.name || 'Unknown',
                 arrived,
                 guest.isGhost ? 'Yes' : 'No',
+                guest.market || '',
+                guest.guestType || '',
                 guest.notes || ''
               ]);
             }
@@ -3353,6 +3481,127 @@ export default function SeatingManager() {
     XLSX.writeFile(wb, fileName);
     
     showNotification(`${day.name} report exported`);
+  };
+
+  // Export all guests data to Excel (for backup before delete)
+  const exportGuestsToExcel = () => {
+    const wb = XLSX.utils.book_new();
+    
+    // Guests sheet with all guest data
+    const guestsData: any[][] = [
+      ['Guest Data Export'],
+      ['Generated on', new Date().toLocaleString()],
+      [],
+      ['ID', 'Name', 'Notes', 'Market', 'Guest Type', 'Ghost', 'Manually Added']
+    ];
+
+    guests.forEach(guest => {
+      guestsData.push([
+        guest.id,
+        guest.name,
+        guest.notes || '',
+        guest.market || '',
+        guest.guestType || '',
+        guest.isGhost ? 'Yes' : 'No',
+        guest.isManuallyAdded ? 'Yes' : 'No'
+      ]);
+    });
+
+    const guestsSheet = XLSX.utils.aoa_to_sheet(guestsData);
+    XLSX.utils.book_append_sheet(wb, guestsSheet, 'Guests');
+
+    // Groups sheet
+    const groupsData: any[][] = [
+      ['Groups Data'],
+      [],
+      ['Group ID', 'Group Name', 'Lead Guest', 'Members']
+    ];
+
+    groups.forEach(group => {
+      const memberNames = group.members.map(m => m.guestName).join(', ');
+      groupsData.push([
+        group.id,
+        group.name || 'Unnamed Group',
+        group.leadGuestName,
+        memberNames || 'No members'
+      ]);
+    });
+
+    const groupsSheet = XLSX.utils.aoa_to_sheet(groupsData);
+    XLSX.utils.book_append_sheet(wb, groupsSheet, 'Groups');
+
+    // Assignments sheet - all assignments across days and services
+    const assignmentsData: any[][] = [
+      ['Assignments Data'],
+      [],
+      ['Day', 'Service', 'Table', 'Guest Name', 'Guest ID']
+    ];
+
+    DAYS.forEach(day => {
+      services.forEach(service => {
+        Object.keys(assignments)
+          .filter(k => k.startsWith(`${day.id}-${service.id}-`))
+          .forEach(key => {
+            const tableId = parseInt(key.split('-')[2]);
+            const table = tables.find(t => t.id === tableId);
+            const guestIds = assignments[key] || [];
+            
+            guestIds.forEach(guestId => {
+              const guest = guests.find(g => g.id === guestId);
+              if (guest) {
+                assignmentsData.push([
+                  day.name,
+                  service.name,
+                  table?.name || 'Unknown',
+                  guest.name,
+                  guest.id
+                ]);
+              }
+            });
+          });
+      });
+    });
+
+    const assignmentsSheet = XLSX.utils.aoa_to_sheet(assignmentsData);
+    XLSX.utils.book_append_sheet(wb, assignmentsSheet, 'Assignments');
+
+    // Export
+    const fileName = `guests-backup-${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+    
+    showNotification('Guest data exported successfully');
+  };
+
+  // Delete all guests data
+  const deleteAllGuests = async () => {
+    try {
+      const response = await fetch('/api/guests/delete-all', { method: 'DELETE' });
+      
+      if (!response.ok) {
+        throw new Error('Failed to delete all guest data');
+      }
+      
+      // Clear all local state
+      setGuests([]);
+      setGroups([]);
+      setAssignments({});
+      setArrivedGuests({});
+      setDepartedGuests({});
+      setGroupMembers({});
+      setMemberArrivals({});
+      setSelectedGuest(null);
+      setQuickAssignMode(false);
+      
+      // Close modal and reset state
+      setShowDeleteAllModal(false);
+      setDeleteConfirmStep(1);
+      setDeleteConfirmText('');
+      
+      showNotification('All guest data has been deleted', 'success');
+    } catch (error) {
+      console.error('Error deleting all guests:', error);
+      showNotification('Failed to delete all guest data', 'error');
+    }
   };
 
   const currentService = services.find(s => s.id === selectedService)!;
@@ -3612,11 +3861,13 @@ export default function SeatingManager() {
                 {/* Sort */}
                 <select
                   value={guestSort}
-                  onChange={(e) => setGuestSort(e.target.value as 'name' | 'size')}
+                  onChange={(e) => setGuestSort(e.target.value as 'name' | 'size' | 'market' | 'guestType')}
                   className="px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
                 >
                   <option value="name">Sort by Name</option>
                   <option value="size">Sort by Group Size</option>
+                  <option value="market">Sort by Market</option>
+                  <option value="guestType">Sort by Guest Type</option>
                 </select>
               </div>
             </div>
@@ -3643,9 +3894,14 @@ export default function SeatingManager() {
                   .sort((a, b) => {
                     if (guestSort === 'name') {
                       return a.name.localeCompare(b.name);
-                    } else {
+                    } else if (guestSort === 'size') {
                       return getGuestTotalGroupSize(b.id) - getGuestTotalGroupSize(a.id);
+                    } else if (guestSort === 'market') {
+                      return (a.market || '').localeCompare(b.market || '');
+                    } else if (guestSort === 'guestType') {
+                      return (a.guestType || '').localeCompare(b.guestType || '');
                     }
+                    return 0;
                   })
                   .map(guest => {
                     // Get all assignments for this guest
@@ -4088,17 +4344,27 @@ export default function SeatingManager() {
                     <h2 className="font-semibold text-gray-900">
                       All Guests
                     </h2>
-                  {quickAssignMode && (
-                    <button
-                      onClick={() => {
-                        setQuickAssignMode(false);
-                        setSelectedGuest(null);
-                      }}
-                      className="text-xs text-red-600 hover:text-red-700"
-                    >
-                      Cancel
-                    </button>
-                  )}
+                    <div className="flex items-center gap-2">
+                      {quickAssignMode && (
+                        <button
+                          onClick={() => {
+                            setQuickAssignMode(false);
+                            setSelectedGuest(null);
+                          }}
+                          className="text-xs text-red-600 hover:text-red-700"
+                        >
+                          Cancel
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setShowDeleteAllModal(true)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 rounded transition"
+                        title="Delete all guests data"
+                      >
+                        <Trash2 size={14} />
+                        Delete All
+                      </button>
+                    </div>
                 </div>
                 
                 {/* Search */}
@@ -4127,11 +4393,13 @@ export default function SeatingManager() {
                   
                   <select
                     value={guestSort}
-                    onChange={(e) => setGuestSort(e.target.value as 'name' | 'size')}
+                    onChange={(e) => setGuestSort(e.target.value as 'name' | 'size' | 'market' | 'guestType')}
                     className="flex-1 px-2 py-1.5 text-xs border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
                   >
                     <option value="name">By Name</option>
                     <option value="size">By Group Size</option>
+                    <option value="market">By Market</option>
+                    <option value="guestType">By Guest Type</option>
                   </select>
                 </div>
               </div>
@@ -4148,9 +4416,14 @@ export default function SeatingManager() {
                   .sort((a, b) => {
                     if (guestSort === 'name') {
                       return a.name.localeCompare(b.name);
-                    } else {
+                    } else if (guestSort === 'size') {
                       return getGuestTotalGroupSize(b.id) - getGuestTotalGroupSize(a.id);
+                    } else if (guestSort === 'market') {
+                      return (a.market || '').localeCompare(b.market || '');
+                    } else if (guestSort === 'guestType') {
+                      return (a.guestType || '').localeCompare(b.guestType || '');
                     }
+                    return 0;
                   })
                   .map(guest => {
                     const assignedTable = getAssignedTable(guest.id, selectedService);
@@ -4254,6 +4527,18 @@ export default function SeatingManager() {
                                   <span className="text-gray-500 truncate max-w-[150px]">
                                     Member of {memberOfGroups.length} group{memberOfGroups.length > 1 ? 's' : ''}
                                   </span>
+                                </>
+                              )}
+                              {guest.market && (
+                                <>
+                                  <span className="text-gray-300">•</span>
+                                  <span className="text-xs px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-medium">{guest.market}</span>
+                                </>
+                              )}
+                              {guest.guestType && (
+                                <>
+                                  <span className="text-gray-300">•</span>
+                                  <span className="text-xs px-1.5 py-0.5 bg-indigo-100 text-indigo-700 rounded-full font-medium">{guest.guestType}</span>
                                 </>
                               )}
                               {guest.notes && (
@@ -4436,7 +4721,9 @@ export default function SeatingManager() {
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {tables.map(table => {
+                {[...tables].sort((a, b) => 
+                  a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+                ).map(table => {
                   const capacity = getTableCapacity(table.id, selectedService);
                   const occupancy = getTableOccupancy(table.id, selectedService);
                   const assignedGuestIds = assignments[`${selectedDay}-${selectedService}-${table.id}`] || [];
@@ -4537,12 +4824,15 @@ export default function SeatingManager() {
                           : ''
                       }`}
                     >
-                      {/* Availability indicator */}
-                      {tableAvailabilityStatus === 'clearing' && (
-                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-400 rounded-full border-2 border-white animate-pulse" />
+                      {/* Availability indicator - based on previous service guests */}
+                      {previousService && prevServiceTotal > 0 && prevServiceDeparted === 0 && (
+                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-pulse" title="Previous service guests still seated" />
                       )}
-                      {tableAvailabilityStatus === 'free' && occupancy === 0 && !isBlocked && (
-                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white" />
+                      {previousService && prevServiceTotal > 0 && prevServiceDeparted > 0 && prevServiceDeparted < prevServiceTotal && (
+                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-400 rounded-full border-2 border-white animate-pulse" title="Partially clearing" />
+                      )}
+                      {(!previousService || prevServiceTotal === 0 || prevServiceDeparted === prevServiceTotal) && occupancy === 0 && !isBlocked && (
+                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white" title="Table available" />
                       )}
                       
                       <div className="flex items-center justify-between mb-3">
@@ -5009,7 +5299,9 @@ export default function SeatingManager() {
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
                   >
                     <option value="">No assignment</option>
-                    {tables.map(table => {
+                    {[...tables].sort((a, b) => 
+                      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+                    ).map(table => {
                       const occupancy = getTableOccupancy(table.id, newGuest.assignedService!);
                       const available = table.capacity - occupancy;
                       const canFit = available >= 1;
@@ -6133,7 +6425,7 @@ export default function SeatingManager() {
                         </p>
                         <p className="text-sm text-gray-500 mt-1">or click to browse</p>
                         <p className="text-xs text-gray-400 mt-2">
-                          First column = Name, Second column = Notes (optional)
+                          Recognizes: First Name, Last Name, Market, Type of Guest, Food Allergies
                         </p>
                       </>
                     )}
@@ -6406,9 +6698,161 @@ export default function SeatingManager() {
           tables={tables}
           onTableDrag={handleTableDrag}
           onAddTable={handleAddTableFromEditor}
+          onEditTable={handleEditTable}
           onRemoveTable={deleteTable}
           onClose={() => setShowRoomEditor(false)}
         />
+      )}
+
+      {/* Delete All Guests Confirmation Modal */}
+      {showDeleteAllModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold text-red-700">Delete All Guest Data</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {deleteConfirmStep === 1 
+                    ? 'This action will permanently delete all guest data'
+                    : 'Final confirmation required'}
+                </p>
+              </div>
+              <button 
+                onClick={() => {
+                  setShowDeleteAllModal(false);
+                  setDeleteConfirmStep(1);
+                  setDeleteConfirmText('');
+                }} 
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            
+            <div className="p-4">
+              {deleteConfirmStep === 1 ? (
+                <>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm text-red-800 font-medium">
+                          Warning: This action cannot be undone!
+                        </p>
+                        <p className="text-xs text-red-700 mt-1">
+                          The following data will be permanently deleted:
+                        </p>
+                        <ul className="text-xs text-red-700 mt-2 list-disc list-inside space-y-0.5">
+                          <li>{guests.length} guest{guests.length !== 1 ? 's' : ''}</li>
+                          <li>{groups.length} group{groups.length !== 1 ? 's' : ''}</li>
+                          <li>All table assignments</li>
+                          <li>All arrival and departure records</li>
+                        </ul>
+                        <p className="text-xs text-red-700 mt-2">
+                          Table configuration will be preserved.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-start gap-2">
+                      <Download size={16} className="text-blue-600 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm text-blue-800 font-medium">
+                          Download a backup first?
+                        </p>
+                        <p className="text-xs text-blue-700 mt-1">
+                          We recommend exporting your guest data before deleting.
+                        </p>
+                        <button
+                          onClick={exportGuestsToExcel}
+                          className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition"
+                        >
+                          <FileDown size={14} />
+                          Download Excel Backup
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => {
+                        setShowDeleteAllModal(false);
+                        setDeleteConfirmStep(1);
+                        setDeleteConfirmText('');
+                      }}
+                      className="flex-1 py-2.5 px-4 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => setDeleteConfirmStep(2)}
+                      className="flex-1 py-2.5 px-4 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition"
+                    >
+                      Continue
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-4">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
+                      <div>
+                        <p className="text-sm text-red-800 font-medium">
+                          Are you absolutely sure?
+                        </p>
+                        <p className="text-xs text-red-700 mt-1">
+                          Type <strong>DELETE</strong> below to confirm this action.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Type DELETE to confirm
+                    </label>
+                    <input
+                      type="text"
+                      value={deleteConfirmText}
+                      onChange={(e) => setDeleteConfirmText(e.target.value)}
+                      placeholder="DELETE"
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-500 focus:border-red-500"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="flex gap-3">
+                    <button
+                      onClick={() => {
+                        setDeleteConfirmStep(1);
+                        setDeleteConfirmText('');
+                      }}
+                      className="flex-1 py-2.5 px-4 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition"
+                    >
+                      Back
+                    </button>
+                    <button
+                      onClick={deleteAllGuests}
+                      disabled={deleteConfirmText !== 'DELETE'}
+                      className={`flex-1 py-2.5 px-4 rounded-lg font-medium transition flex items-center justify-center gap-2 ${
+                        deleteConfirmText === 'DELETE'
+                          ? 'bg-red-600 hover:bg-red-700 text-white'
+                          : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                      }`}
+                    >
+                      <Trash2 size={16} />
+                      Delete All Data
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
