@@ -86,7 +86,9 @@ function RoomMap({
   onTableDrag, 
   hasArrived, 
   highlightForReassign, 
-  isTableBlocked 
+  isTableBlocked,
+  hasDeparted,
+  services
 }: {
   tables: Table[];
   guests: Guest[];
@@ -99,6 +101,8 @@ function RoomMap({
   hasArrived?: (guestId: number) => boolean;
   highlightForReassign?: number | null;
   isTableBlocked?: (tableId: number, serviceId: number) => boolean;
+  hasDeparted?: (guestId: number, serviceId: number) => boolean;
+  services?: Service[];
 }) {
   const [dragging, setDragging] = useState<number | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -223,6 +227,53 @@ function RoomMap({
         const isBlocked = isTableBlocked ? isTableBlocked(table.id, selectedService) : false;
         const isDraggingThis = dragging === table.id;
         const pos = getTablePosition(table);
+        
+        // Calculate departure status for availability indicator
+        const departedCount = hasDeparted 
+          ? uniqueGuestIds.filter(id => hasDeparted(id, selectedService)).length 
+          : 0;
+        const allDeparted = uniqueGuestIds.length > 0 && departedCount === uniqueGuestIds.length;
+        
+        // Check previous service for clearing status
+        const previousService = services?.find(s => s.id === selectedService - 1);
+        let prevServiceDeparted = 0;
+        let prevServiceTotal = 0;
+        if (previousService) {
+          const prevKey = `${selectedDay}-${previousService.id}-${table.id}`;
+          const prevGuestIds = [...new Set(assignments[prevKey] || [])];
+          prevServiceTotal = prevGuestIds.length;
+          if (hasDeparted) {
+            prevServiceDeparted = prevGuestIds.filter(id => hasDeparted(id, previousService.id)).length;
+          }
+        }
+        
+        // Calculate availability status
+        let availabilityStatus: 'free' | 'clearing' | 'occupied' = 'free';
+        if (uniqueGuestIds.length > 0) {
+          if (allDeparted) {
+            availabilityStatus = 'free';
+          } else if (departedCount > 0) {
+            availabilityStatus = 'clearing';
+          } else {
+            availabilityStatus = 'occupied';
+          }
+        } else if (previousService && prevServiceTotal > 0) {
+          if (prevServiceDeparted === prevServiceTotal) {
+            availabilityStatus = 'free';
+          } else if (prevServiceDeparted > 0) {
+            availabilityStatus = 'clearing';
+          } else {
+            availabilityStatus = 'occupied';
+          }
+        }
+        
+        // Availability indicator dot
+        let availabilityDot = null;
+        if (availabilityStatus === 'clearing') {
+          availabilityDot = <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-400 rounded-full border-2 border-white animate-pulse" />;
+        } else if (availabilityStatus === 'free' && isEmpty) {
+          availabilityDot = <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white" />;
+        }
 
         return (
           <div
@@ -260,6 +311,7 @@ function RoomMap({
             onTouchStart={(e) => handleTouchStart(e, table)}
             onClick={() => !isEditor && !dragging && onTableClick && onTableClick(table)}
           >
+            {availabilityDot}
             <div className="font-bold text-sm">{table.name}</div>
             <div className="text-xs opacity-90">{occupancy}/{table.capacity}</div>
             {!isEmpty && (
@@ -941,7 +993,7 @@ function WaiterView({
                             className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
                               departed ? 'bg-gray-300 cursor-not-allowed' :
                               arrived ? 'bg-green-500 text-white active:scale-90' :
-                              'border-3 border-gray-300 hover:border-green-400 active:scale-90'
+                              'border-4 border-gray-500 bg-gray-100 hover:border-green-500 hover:bg-green-50 active:scale-90'
                             }`}
                           >
                             {arrived && <Check size={28} />}
@@ -1348,6 +1400,15 @@ export default function SeatingManager() {
   
   // Split group member assignments (guestId -> tableId mapping)
   const [splitMemberAssignments, setSplitMemberAssignments] = useState<Record<number, number | null>>({});
+  
+  // Already assigned popup - for when trying to assign a guest who's already at another table
+  const [alreadyAssignedPopup, setAlreadyAssignedPopup] = useState<{
+    guest: Guest;
+    currentTableId: number;
+    newTableId: number;
+    serviceId: number;
+    isGroupMember?: boolean;
+  } | null>(null);
 
   const showNotification = (message: string, type = 'success') => {
     setNotification({ message, type });
@@ -1380,8 +1441,8 @@ export default function SeatingManager() {
       const memberArrivalsData = await memberArrivalsRes.json();
       const groupsData = await groupsRes.json();
 
-      setGuests(guestsData);
-      setTables(tablesData);
+      setGuests(Array.isArray(guestsData) ? guestsData : []);
+      setTables(Array.isArray(tablesData) ? tablesData : []);
       setGroups(Array.isArray(groupsData) ? groupsData : []);
       
       // Handle both old and new API response formats
@@ -1424,16 +1485,25 @@ export default function SeatingManager() {
         try {
           const deptRes = await fetch(`/api/departures?day=${day.id}`);
           const deptData = await deptRes.json();
-          if (Array.isArray(deptData)) {
+          
+          // API returns format like { "mon-1": [guestId1, guestId2], "mon-2": [guestId3] }
+          if (deptData && typeof deptData === 'object' && !Array.isArray(deptData)) {
             if (!departuresMap[day.id]) {
               departuresMap[day.id] = {};
             }
-            deptData.forEach((d: { guest_id: number; service_id: number }) => {
-              if (!departuresMap[day.id][d.service_id]) {
-                departuresMap[day.id][d.service_id] = new Set();
+            // Parse the keys (format: "day-serviceId") and extract serviceId
+            for (const [key, guestIds] of Object.entries(deptData)) {
+              const parts = key.split('-');
+              const serviceId = parseInt(parts[parts.length - 1]);
+              if (!isNaN(serviceId) && Array.isArray(guestIds)) {
+                if (!departuresMap[day.id][serviceId]) {
+                  departuresMap[day.id][serviceId] = new Set();
+                }
+                (guestIds as number[]).forEach(guestId => {
+                  departuresMap[day.id][serviceId].add(guestId);
+                });
               }
-              departuresMap[day.id][d.service_id].add(d.guest_id);
-            });
+            }
           }
         } catch {
           // Departures table might not exist yet
@@ -2147,10 +2217,27 @@ export default function SeatingManager() {
   };
 
 
-  const assignGuest = async (guestId: number, tableId: number, serviceId: number, isGroupMember = false, specificGroupId?: number) => {
+  const assignGuest = async (guestId: number, tableId: number, serviceId: number, isGroupMember = false, specificGroupId?: number, forceMove = false) => {
     try {
       const guest = guests.find(g => g.id === guestId);
       if (!guest) return;
+      
+      // Check if guest is already assigned to another table in this service (unless forcing move)
+      if (!forceMove && !isGroupMember) {
+        const existingTables = getGuestTableAssignments(guestId, serviceId);
+        const otherTables = existingTables.filter(t => t.id !== tableId);
+        if (otherTables.length > 0) {
+          // Guest is already assigned to another table - show confirmation popup
+          setAlreadyAssignedPopup({
+            guest,
+            currentTableId: otherTables[0].id,
+            newTableId: tableId,
+            serviceId,
+            isGroupMember
+          });
+          return;
+        }
+      }
       
       // Check if this guest leads any groups
       const ledGroups = getGroupsAsLead(guestId);
@@ -2185,6 +2272,18 @@ export default function SeatingManager() {
             isMove: false
           });
           return;
+        }
+      }
+      
+      // If forcing a move, delete old assignments first
+      if (forceMove) {
+        const existingTables = getGuestTableAssignments(guestId, serviceId);
+        for (const existingTable of existingTables) {
+          if (existingTable.id !== tableId) {
+            await fetch(`/api/assignments?guestId=${guestId}&tableId=${existingTable.id}&day=${selectedDay}&serviceId=${serviceId}`, {
+              method: 'DELETE'
+            });
+          }
         }
       }
       
@@ -4369,6 +4468,42 @@ export default function SeatingManager() {
                     reassignGuests.guests.length > 0 &&
                     !isBlocked;
 
+                  // Calculate availability status for this table
+                  const uniqueGuestIds = [...new Set(assignedGuestIds)];
+                  const departedCount = uniqueGuestIds.filter(id => hasDeparted(id, selectedService)).length;
+                  const allDeparted = uniqueGuestIds.length > 0 && departedCount === uniqueGuestIds.length;
+                  
+                  // Check previous service for clearing status
+                  const previousService = services.find(s => s.id === selectedService - 1);
+                  let prevServiceDeparted = 0;
+                  let prevServiceTotal = 0;
+                  if (previousService) {
+                    const prevKey = `${selectedDay}-${previousService.id}-${table.id}`;
+                    const prevGuestIds = [...new Set(assignments[prevKey] || [])];
+                    prevServiceTotal = prevGuestIds.length;
+                    prevServiceDeparted = prevGuestIds.filter(id => hasDeparted(id, previousService.id)).length;
+                  }
+                  
+                  // Calculate availability status
+                  let tableAvailabilityStatus: 'free' | 'clearing' | 'occupied' = 'free';
+                  if (uniqueGuestIds.length > 0) {
+                    if (allDeparted) {
+                      tableAvailabilityStatus = 'free';
+                    } else if (departedCount > 0) {
+                      tableAvailabilityStatus = 'clearing';
+                    } else {
+                      tableAvailabilityStatus = 'occupied';
+                    }
+                  } else if (previousService && prevServiceTotal > 0) {
+                    if (prevServiceDeparted === prevServiceTotal) {
+                      tableAvailabilityStatus = 'free';
+                    } else if (prevServiceDeparted > 0) {
+                      tableAvailabilityStatus = 'clearing';
+                    } else {
+                      tableAvailabilityStatus = 'occupied';
+                    }
+                  }
+
                   return (
                     <div
                       key={table.id}
@@ -4386,7 +4521,7 @@ export default function SeatingManager() {
                           reassignMultipleGuests(guestIds, reassignGuests.fromTableId, table.id, selectedService);
                         }
                       }}
-                      className={`bg-white rounded-xl shadow-sm border p-4 transition ${
+                      className={`bg-white rounded-xl shadow-sm border p-4 transition relative ${
                         isBlocked
                           ? 'opacity-50 bg-gray-100 border-red-300'
                           : canAssign
@@ -4402,6 +4537,14 @@ export default function SeatingManager() {
                           : ''
                       }`}
                     >
+                      {/* Availability indicator */}
+                      {tableAvailabilityStatus === 'clearing' && (
+                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-orange-400 rounded-full border-2 border-white animate-pulse" />
+                      )}
+                      {tableAvailabilityStatus === 'free' && occupancy === 0 && !isBlocked && (
+                        <div className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 rounded-full border-2 border-white" />
+                      )}
+                      
                       <div className="flex items-center justify-between mb-3">
                         <div className="flex items-center gap-2">
                           <h3 className="font-medium text-gray-900">{table.name}</h3>
@@ -4595,11 +4738,18 @@ export default function SeatingManager() {
                                   {groupData.guests.map(guest => {
                                     const isSelected = reassignGuests?.guests.some(g => g.id === guest.id);
                                     
+                                    const guestDeparted = hasDeparted(guest.id, selectedService);
+                                    const guestArrived = hasArrived(guest.id);
+                                    
                                     return (
                                       <div
                                         key={guest.id}
                                         className={`flex items-center justify-between text-sm rounded-lg px-3 py-2 ${
-                                          hasArrived(guest.id) ? 'bg-green-50 border border-green-200' : 'bg-gray-50'
+                                          guestDeparted 
+                                            ? 'bg-gray-100 border border-gray-300 opacity-60' 
+                                            : guestArrived 
+                                            ? 'bg-green-50 border border-green-200' 
+                                            : 'bg-gray-50'
                                         } ${reassignGuest?.guest.id === guest.id ? 'ring-2 ring-orange-400' : ''} ${
                                           isSelected ? 'ring-2 ring-blue-400' : ''
                                         }`}
@@ -4624,22 +4774,56 @@ export default function SeatingManager() {
                                             <button
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                toggleArrival(guest.id);
+                                                const arrived = hasArrived(guest.id);
+                                                const departed = hasDeparted(guest.id, selectedService);
+                                                
+                                                if (!arrived && !departed) {
+                                                  // Not arrived -> Arrived
+                                                  toggleArrival(guest.id);
+                                                } else if (arrived && !departed) {
+                                                  // Arrived -> Departed
+                                                  toggleDeparture(guest.id, selectedService);
+                                                } else if (departed) {
+                                                  // Departed -> Reset to not arrived
+                                                  toggleDeparture(guest.id, selectedService); // Remove departed status
+                                                  toggleArrival(guest.id); // Remove arrived status
+                                                }
                                               }}
                                               className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${
-                                                hasArrived(guest.id)
+                                                hasDeparted(guest.id, selectedService)
+                                                  ? 'bg-orange-400 border-orange-400 text-white'
+                                                  : hasArrived(guest.id)
                                                   ? 'bg-green-500 border-green-500 text-white'
-                                                  : 'border-gray-300 hover:border-green-400'
+                                                  : 'border-gray-400 bg-gray-100 hover:border-green-400'
                                               }`}
-                                              title={hasArrived(guest.id) ? 'Mark as not arrived' : 'Mark as arrived'}
+                                              title={
+                                                hasDeparted(guest.id, selectedService)
+                                                  ? 'Click to reset (mark as not arrived)'
+                                                  : hasArrived(guest.id)
+                                                  ? 'Click to mark as departed'
+                                                  : 'Click to mark as arrived'
+                                              }
                                             >
-                                              {hasArrived(guest.id) && <Check size={12} />}
+                                              {hasDeparted(guest.id, selectedService) ? (
+                                                <LogOut size={10} />
+                                              ) : hasArrived(guest.id) ? (
+                                                <Check size={12} />
+                                              ) : null}
                                             </button>
                                           )}
                                           <div className="flex items-center gap-1">
-                                            <span className={`font-medium ${hasArrived(guest.id) ? 'text-green-700' : ''}`}>
+                                            <span className={`font-medium ${
+                                              guestDeparted 
+                                                ? 'text-gray-500 line-through' 
+                                                : guestArrived 
+                                                ? 'text-green-700' 
+                                                : ''
+                                            }`}>
                                               {guest.name}
                                             </span>
+                                            {guestDeparted && (
+                                              <span className="text-xs text-orange-500 ml-1">Left</span>
+                                            )}
                                             {guest.isManuallyAdded && (
                                               <span className="text-xs text-blue-500" title="Added manually">+</span>
                                             )}
@@ -5571,6 +5755,77 @@ export default function SeatingManager() {
                   className="w-full py-2 text-sm text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg"
                 >
                   Assign only {selectGroupForAssign.guest.name}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Already Assigned Popup - for moving guests between tables */}
+      {alreadyAssignedPopup && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="p-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Guest Already Assigned</h3>
+                <p className="text-sm text-gray-500 mt-1">
+                  {alreadyAssignedPopup.guest.name} is already seated at {tables.find(t => t.id === alreadyAssignedPopup.currentTableId)?.name}
+                </p>
+              </div>
+              <button onClick={() => setAlreadyAssignedPopup(null)} className="text-gray-400 hover:text-gray-600">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
+                <div className="flex items-start gap-2">
+                  <AlertCircle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm text-amber-800">
+                      This guest is already assigned to <strong>{tables.find(t => t.id === alreadyAssignedPopup.currentTableId)?.name}</strong> for this service.
+                    </p>
+                    <p className="text-xs text-amber-700 mt-1">
+                      Do you want to move them to <strong>{tables.find(t => t.id === alreadyAssignedPopup.newTableId)?.name}</strong>?
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setAlreadyAssignedPopup(null)}
+                  className="flex-1 py-2.5 px-4 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg font-medium transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={async () => {
+                    const { guest, currentTableId, newTableId, serviceId, isGroupMember } = alreadyAssignedPopup;
+                    setAlreadyAssignedPopup(null);
+                    
+                    // Delete old assignment
+                    await fetch(`/api/assignments?guestId=${guest.id}&tableId=${currentTableId}&day=${selectedDay}&serviceId=${serviceId}`, {
+                      method: 'DELETE'
+                    });
+                    
+                    // Update local state
+                    const oldKey = `${selectedDay}-${serviceId}-${currentTableId}`;
+                    setAssignments(prev => ({
+                      ...prev,
+                      [oldKey]: (prev[oldKey] || []).filter(id => id !== guest.id)
+                    }));
+                    
+                    // Assign to new table with forceMove flag
+                    await assignGuest(guest.id, newTableId, serviceId, isGroupMember || false, undefined, true);
+                    
+                    const fromTable = tables.find(t => t.id === currentTableId);
+                    const toTable = tables.find(t => t.id === newTableId);
+                    showNotification(`${guest.name} moved from ${fromTable?.name} to ${toTable?.name}`);
+                  }}
+                  className="flex-1 py-2.5 px-4 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-medium transition flex items-center justify-center gap-2"
+                >
+                  <Move size={16} />
+                  Move Guest
                 </button>
               </div>
             </div>
