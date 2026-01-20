@@ -8,7 +8,12 @@ export async function GET() {
              COALESCE(is_ghost, false) as "isGhost",
              COALESCE(is_manually_added, false) as "isManuallyAdded",
              market,
-             guest_type as "guestType"
+             guest_type as "guestType",
+             presence_days as "presenceDays",
+             phone_number as "phoneNumber",
+             COALESCE(sms_enabled, false) as "smsEnabled",
+             COALESCE(sms_language, 'en') as "smsLanguage",
+             sms_days as "smsDays"
       FROM guests 
       ORDER BY created_at DESC
     `;
@@ -22,15 +27,20 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, notes, isManuallyAdded, market, guestType } = body;
+    const { name, notes, isManuallyAdded, market, guestType, presenceDays, phoneNumber, smsEnabled, smsLanguage, smsDays } = body;
     
     const result = await sql`
-      INSERT INTO guests (name, party_size, notes, is_ghost, is_manually_added, market, guest_type)
-      VALUES (${name}, 1, ${notes || ''}, false, ${isManuallyAdded || false}, ${market || null}, ${guestType || null})
+      INSERT INTO guests (name, party_size, notes, is_ghost, is_manually_added, market, guest_type, presence_days, phone_number, sms_enabled, sms_language, sms_days)
+      VALUES (${name}, 1, ${notes || ''}, false, ${isManuallyAdded || false}, ${market || null}, ${guestType || null}, ${presenceDays || null}, ${phoneNumber || null}, ${smsEnabled || false}, ${smsLanguage || 'en'}, ${smsDays || null})
       RETURNING id, name, party_size as "partySize", notes, is_ghost as "isGhost", 
                 COALESCE(is_manually_added, false) as "isManuallyAdded",
                 market,
-                guest_type as "guestType"
+                guest_type as "guestType",
+                presence_days as "presenceDays",
+                phone_number as "phoneNumber",
+                COALESCE(sms_enabled, false) as "smsEnabled",
+                COALESCE(sms_language, 'en') as "smsLanguage",
+                sms_days as "smsDays"
     `;
     
     return NextResponse.json(result.rows[0]);
@@ -43,7 +53,7 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, name, partySize, notes, isGhost, market, guestType } = body;
+    const { id, name, partySize, notes, isGhost, market, guestType, presenceDays, phoneNumber, smsEnabled, smsLanguage, smsDays } = body;
     
     if (!id) {
       return NextResponse.json({ error: 'Guest ID required' }, { status: 400 });
@@ -78,10 +88,43 @@ export async function PUT(request: NextRequest) {
         WHERE id = ${id}
       `;
     }
+
+    // Update presence days, phone number, and SMS settings
+    if (presenceDays !== undefined) {
+      await sql`
+        UPDATE guests 
+        SET presence_days = ${presenceDays}
+        WHERE id = ${id}
+      `;
+    }
+
+    if (phoneNumber !== undefined) {
+      await sql`
+        UPDATE guests 
+        SET phone_number = ${phoneNumber}
+        WHERE id = ${id}
+      `;
+    }
+
+    if (smsEnabled !== undefined || smsLanguage !== undefined || smsDays !== undefined) {
+      await sql`
+        UPDATE guests 
+        SET 
+          sms_enabled = COALESCE(${smsEnabled}, sms_enabled),
+          sms_language = COALESCE(${smsLanguage}, sms_language),
+          sms_days = COALESCE(${smsDays}, sms_days)
+        WHERE id = ${id}
+      `;
+    }
     
     const result = await sql`
       SELECT id, name, party_size as "partySize", notes, COALESCE(is_ghost, false) as "isGhost",
-             market, guest_type as "guestType"
+             market, guest_type as "guestType",
+             presence_days as "presenceDays",
+             phone_number as "phoneNumber",
+             COALESCE(sms_enabled, false) as "smsEnabled",
+             COALESCE(sms_language, 'en') as "smsLanguage",
+             sms_days as "smsDays"
       FROM guests 
       WHERE id = ${id}
     `;

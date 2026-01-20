@@ -143,6 +143,56 @@ export async function initializeDatabase() {
       // Column might already exist, ignore error
     }
 
+    // Migration: Add presence_days column to guests table (JSON array of presence days)
+    try {
+      await sql`
+        ALTER TABLE guests 
+        ADD COLUMN IF NOT EXISTS presence_days TEXT
+      `;
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
+
+    // Migration: Add phone_number column to guests table
+    try {
+      await sql`
+        ALTER TABLE guests 
+        ADD COLUMN IF NOT EXISTS phone_number VARCHAR(50)
+      `;
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
+
+    // Migration: Add sms_enabled column to guests table
+    try {
+      await sql`
+        ALTER TABLE guests 
+        ADD COLUMN IF NOT EXISTS sms_enabled BOOLEAN DEFAULT false
+      `;
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
+
+    // Migration: Add sms_language column to guests table (en, fr, de)
+    try {
+      await sql`
+        ALTER TABLE guests 
+        ADD COLUMN IF NOT EXISTS sms_language VARCHAR(10) DEFAULT 'en'
+      `;
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
+
+    // Migration: Add sms_days column to guests table (JSON array of selected days for SMS)
+    try {
+      await sql`
+        ALTER TABLE guests 
+        ADD COLUMN IF NOT EXISTS sms_days TEXT
+      `;
+    } catch (error) {
+      // Column might already exist, ignore error
+    }
+
     // Create arrivals table
     await sql`
       CREATE TABLE IF NOT EXISTS arrivals (

@@ -4,6 +4,12 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Users, Clock, Upload, Plus, X, Search, ArrowRight, Check, AlertCircle, Trash2, Calendar, BarChart3, TrendingUp, TrendingDown, Eye, Settings, Move, MapPin, LayoutGrid, Edit2, Download, FileDown, RefreshCw, Ghost, UserPlus, Link2, LogOut, ChevronRight } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
+interface PresenceDay {
+  date: string;
+  weekday: string;
+  ticketType: string;
+}
+
 interface Guest {
   id: number;
   name: string;
@@ -12,6 +18,11 @@ interface Guest {
   guestType?: string;
   isGhost?: boolean;
   isManuallyAdded?: boolean;
+  presenceDays?: string; // JSON string of PresenceDay[]
+  phoneNumber?: string;
+  smsEnabled?: boolean;
+  smsLanguage?: string;
+  smsDays?: string; // JSON string of selected days
 }
 
 // New group system
@@ -848,7 +859,7 @@ function WaiterView({
               isTableBlocked={isTableBlocked}
               hasDeparted={hasDeparted}
               services={services}
-              height={500}
+              height={400}
               highlightRelocateSource={relocatingGuest?.fromTableId || relocatingMultiple?.fromTableId || null}
               highlightRelocateTarget={!!(relocatingGuest || relocatingMultiple)}
               isMultiRelocate={!!relocatingMultiple}
@@ -889,7 +900,7 @@ function WaiterView({
             </div>
 
             {/* Tables Quick List */}
-            <div className="bg-white rounded-2xl shadow-sm p-4 max-h-[400px] overflow-y-auto">
+            <div className="bg-white rounded-2xl shadow-sm p-4 max-h-[40vh] lg:max-h-[400px] overflow-y-auto">
               <h3 className="font-semibold text-gray-900 mb-3">Tables</h3>
               <div className="space-y-2">
                 {tableStatuses
@@ -912,14 +923,24 @@ function WaiterView({
                           : 'bg-red-50 border border-red-200'
                       }`}
                     >
-                      <div>
-                        <div className="font-medium">{status.table.name}</div>
-                        <div className="text-xs text-gray-500">{status.totalCount} guests</div>
+                      <div className="flex items-center gap-3">
+                        {/* Status indicator dot */}
+                        <div className={`w-4 h-4 rounded-full flex-shrink-0 ${
+                          status.arrivedCount === status.totalCount
+                            ? 'bg-green-500'
+                            : status.arrivedCount > 0
+                            ? 'bg-orange-400'
+                            : 'bg-red-600'
+                        }`} />
+                        <div>
+                          <div className="font-medium">{status.table.name}</div>
+                          <div className="text-xs text-gray-500">{status.totalCount} guests</div>
+                        </div>
                       </div>
                       <div className="flex items-center gap-2">
                         <span className={`text-lg font-bold ${
                           status.arrivedCount === status.totalCount ? 'text-green-600' :
-                          status.arrivedCount > 0 ? 'text-yellow-600' : 'text-red-600'
+                          status.arrivedCount > 0 ? 'text-orange-600' : 'text-red-600'
                         }`}>
                           {status.arrivedCount}/{status.totalCount}
                         </span>
@@ -1346,7 +1367,33 @@ function WeeklySummary({
   );
 }
 
+// Password for the platform
+const PLATFORM_PASSWORD = 'OmegaOEMSM';
+
 export default function SeatingManager() {
+  // Authentication state
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  // Check if already authenticated on mount
+  useEffect(() => {
+    const isAuth = sessionStorage.getItem('seating_manager_auth') === 'true';
+    setIsAuthenticated(isAuth);
+    setAuthChecked(true);
+  }, []);
+
+  const handleLogin = () => {
+    if (passwordInput === PLATFORM_PASSWORD) {
+      sessionStorage.setItem('seating_manager_auth', 'true');
+      setIsAuthenticated(true);
+      setPasswordError(false);
+    } else {
+      setPasswordError(true);
+    }
+  };
+
   const [guests, setGuests] = useState<Guest[]>([]);
   const [tables, setTables] = useState<Table[]>([]);
   const [groups, setGroups] = useState<Group[]>([]);
@@ -1362,6 +1409,7 @@ export default function SeatingManager() {
   const [searchTerm, setSearchTerm] = useState('');
   const [guestFilter, setGuestFilter] = useState<'all' | 'assigned' | 'unassigned'>('all');
   const [guestSort, setGuestSort] = useState<'name' | 'size' | 'market' | 'guestType'>('name');
+  const [presenceDayFilter, setPresenceDayFilter] = useState<string[]>([]);
   const [showOvercapacityAlert, setShowOvercapacityAlert] = useState(false);
   const [overcapacityTable, setOvercapacityTable] = useState<{table: Table, guests: Guest[], over: number} | null>(null);
   const [guestListCollapsed, setGuestListCollapsed] = useState(false);
@@ -1384,7 +1432,18 @@ export default function SeatingManager() {
   const [chairAdjustments, setChairAdjustments] = useState<Record<string, Record<number, number>>>({});
   const [tempChairAdjustments, setTempChairAdjustments] = useState<{tableId: number, chairs: number}[]>([]);
   const [splitAllocations, setSplitAllocations] = useState<{tableId: number, seats: number}[]>([]);
-  const [newGuest, setNewGuest] = useState({ name: '', notes: '', assignedTable: null as number | null, assignedService: null as number | null });
+  const [newGuest, setNewGuest] = useState({ 
+    name: '', 
+    firstName: '',
+    lastName: '',
+    notes: '', 
+    market: '',
+    guestType: '',
+    phoneNumber: '',
+    presenceDays: [] as string[],
+    assignedTable: null as number | null, 
+    assignedService: null as number | null 
+  });
   const [newTable, setNewTable] = useState({ name: '', capacity: 6 });
   const [selectedGuest, setSelectedGuest] = useState<Guest | null>(null);
   const [quickAssignMode, setQuickAssignMode] = useState(false);
@@ -1630,12 +1689,42 @@ export default function SeatingManager() {
   }, [assignments, assignmentKeysByDayService, selectedDay, services]);
 
   const addGuest = async () => {
-    if (!newGuest.name.trim()) return;
+    // Build name from lastName, firstName or use the name field directly
+    let guestName = newGuest.name.trim();
+    if (newGuest.lastName.trim() || newGuest.firstName.trim()) {
+      const lastName = newGuest.lastName.trim();
+      const firstName = newGuest.firstName.trim();
+      if (lastName && firstName) {
+        guestName = `${lastName}, ${firstName}`;
+      } else {
+        guestName = lastName || firstName;
+      }
+    }
+    
+    if (!guestName) return;
+    
+    // Build presence days JSON if any days selected
+    const presenceDaysJson = newGuest.presenceDays.length > 0 
+      ? JSON.stringify(newGuest.presenceDays.map(day => ({
+          date: day,
+          weekday: day,
+          ticketType: ''
+        })))
+      : null;
+    
     try {
       const response = await fetch('/api/guests', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: newGuest.name, notes: newGuest.notes, isManuallyAdded: true })
+        body: JSON.stringify({ 
+          name: guestName, 
+          notes: newGuest.notes, 
+          market: newGuest.market || null,
+          guestType: newGuest.guestType || null,
+          phoneNumber: newGuest.phoneNumber || null,
+          presenceDays: presenceDaysJson,
+          isManuallyAdded: true 
+        })
       });
       const guest = await response.json();
       setGuests([...guests, guest]);
@@ -1660,7 +1749,18 @@ export default function SeatingManager() {
         }));
       }
       
-      setNewGuest({ name: '', notes: '', assignedTable: null, assignedService: null });
+      setNewGuest({ 
+        name: '', 
+        firstName: '',
+        lastName: '',
+        notes: '', 
+        market: '',
+        guestType: '',
+        phoneNumber: '',
+        presenceDays: [],
+        assignedTable: null, 
+        assignedService: null 
+      });
       setShowGuestForm(false);
       showNotification(`${guest.name} added to guest list`);
     } catch (error) {
@@ -1678,7 +1778,14 @@ export default function SeatingManager() {
         body: JSON.stringify({
           id: editingGuest.id,
           name: editingGuest.name,
-          notes: editingGuest.notes
+          notes: editingGuest.notes,
+          market: editingGuest.market,
+          guestType: editingGuest.guestType,
+          phoneNumber: editingGuest.phoneNumber,
+          presenceDays: editingGuest.presenceDays,
+          smsEnabled: editingGuest.smsEnabled,
+          smsLanguage: editingGuest.smsLanguage,
+          smsDays: editingGuest.smsDays
         })
       });
       const updatedGuest = await response.json();
@@ -1690,6 +1797,22 @@ export default function SeatingManager() {
       console.error('Error updating guest:', error);
       showNotification('Failed to update guest', 'error');
     }
+  };
+
+  // Helper function to parse presence days from JSON string
+  const parsePresenceDays = (presenceDaysStr: string | undefined): PresenceDay[] => {
+    if (!presenceDaysStr) return [];
+    try {
+      return JSON.parse(presenceDaysStr);
+    } catch {
+      return [];
+    }
+  };
+
+  // Helper function to get unique weekdays from presence days
+  const getPresenceWeekdays = (presenceDaysStr: string | undefined): string[] => {
+    const days = parsePresenceDays(presenceDaysStr);
+    return [...new Set(days.map(d => d.weekday))];
   };
 
   const toggleGhost = async (guestId: number) => {
@@ -1862,6 +1985,61 @@ export default function SeatingManager() {
 
   const hasDeparted = (guestId: number, serviceId: number) => {
     return departedGuests[selectedDay]?.[serviceId]?.has(guestId) || false;
+  };
+
+  // Optimized status cycling function that handles all state transitions properly
+  const cycleGuestStatus = async (guestId: number, serviceId: number) => {
+    const arrived = hasArrived(guestId);
+    const departed = hasDeparted(guestId, serviceId);
+    const guest = guests.find(g => g.id === guestId);
+
+    if (!arrived && !departed) {
+      // Not arrived -> Arrived: Just call toggleArrival
+      await toggleArrival(guestId);
+    } else if (arrived && !departed) {
+      // Arrived -> Departed: Just call toggleDeparture
+      await toggleDeparture(guestId, serviceId);
+    } else if (departed) {
+      // Departed -> Reset to not arrived
+      // Do optimistic UI update first for responsiveness
+      setDepartedGuests(prev => {
+        const newDepartures = { ...prev };
+        if (newDepartures[selectedDay]?.[serviceId]) {
+          const newServiceDepartures = new Set(newDepartures[selectedDay][serviceId]);
+          newServiceDepartures.delete(guestId);
+          newDepartures[selectedDay] = { ...newDepartures[selectedDay], [serviceId]: newServiceDepartures };
+        }
+        return newDepartures;
+      });
+      setArrivedGuests(prev => {
+        const newArrivals = { ...prev };
+        if (newArrivals[selectedDay]) {
+          const newDayArrivals = new Set(newArrivals[selectedDay]);
+          newDayArrivals.delete(guestId);
+          newArrivals[selectedDay] = newDayArrivals;
+        }
+        return newArrivals;
+      });
+
+      // Make API calls in parallel since they're independent
+      try {
+        await Promise.all([
+          fetch(`/api/departures?guestId=${guestId}&day=${selectedDay}&serviceId=${serviceId}`, {
+            method: 'DELETE'
+          }),
+          fetch('/api/arrivals', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ guestId, day: selectedDay, arrived: false })
+          })
+        ]);
+        showNotification(`${guest?.name} reset to not arrived`);
+      } catch (error) {
+        console.error('Error resetting guest status:', error);
+        showNotification('Failed to reset status', 'error');
+        // Could add rollback logic here if needed
+      }
+    }
   };
 
   const toggleBlockTable = async (tableId: number, serviceId: number) => {
@@ -2100,6 +2278,56 @@ export default function SeatingManager() {
     showNotification(`${newGuests.length} guests imported`);
   };
 
+  // Helper function to parse date from column header and get weekday
+  const parseDateFromHeader = (header: string): { date: string; weekday: string } | null => {
+    // Match patterns like "Aug 31", "August the 31", "August 31"
+    const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+    const monthFullNames = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    
+    const headerLower = header.toLowerCase();
+    
+    let monthIndex = -1;
+    let day = -1;
+    
+    // Find month
+    for (let i = 0; i < monthNames.length; i++) {
+      if (headerLower.includes(monthNames[i]) || headerLower.includes(monthFullNames[i])) {
+        monthIndex = i;
+        break;
+      }
+    }
+    
+    if (monthIndex === -1) return null;
+    
+    // Find day number
+    const dayMatch = header.match(/\b(\d{1,2})\b/);
+    if (dayMatch) {
+      day = parseInt(dayMatch[1], 10);
+    }
+    
+    if (day < 1 || day > 31) return null;
+    
+    // Use current year or next year if date has passed
+    const now = new Date();
+    let year = now.getFullYear();
+    const testDate = new Date(year, monthIndex, day);
+    
+    // If the date has passed, assume next year
+    if (testDate < now) {
+      year = year + 1;
+    }
+    
+    const date = new Date(year, monthIndex, day);
+    const weekday = weekdays[date.getDay()];
+    
+    // Format date as "Mon DD" (e.g., "Aug 31")
+    const monthShort = monthNames[monthIndex].charAt(0).toUpperCase() + monthNames[monthIndex].slice(1);
+    const dateStr = `${monthShort} ${day}`;
+    
+    return { date: dateStr, weekday };
+  };
+
   const importExcelFile = async (file: File) => {
     setIsImporting(true);
     setImportProgress({ current: 0, total: 0 });
@@ -2119,8 +2347,12 @@ export default function SeatingManager() {
         market: -1,
         guestType: -1,
         foodAllergies: -1,
-        name: -1  // Fallback for simple name column
+        name: -1,  // Fallback for simple name column
+        phoneNumber: -1
       };
+      
+      // Track presence day columns (columns AI to BO, indices 34 to 66)
+      const presenceDayColumns: { index: number; date: string; weekday: string; ticketType: string }[] = [];
       
       // Look for header row in first few rows
       for (let i = 0; i < Math.min(5, jsonData.length); i++) {
@@ -2129,6 +2361,7 @@ export default function SeatingManager() {
         
         for (let j = 0; j < row.length; j++) {
           const cell = String(row[j] || '').toLowerCase().trim();
+          const cellOriginal = String(row[j] || '').trim();
           
           if (cell === 'last name' || cell === 'last_name' || cell === 'lastname') {
             columnIndices.lastName = j;
@@ -2154,6 +2387,30 @@ export default function SeatingManager() {
             columnIndices.name = j;
             headerRowIndex = i;
           }
+          if (cell === 'phone number' || cell === 'phone' || cell === 'telephone' || cell === 'tel' || cell === 'mobile') {
+            columnIndices.phoneNumber = j;
+            headerRowIndex = i;
+          }
+          
+          // Check for presence day columns (AI to BO range, approximately columns 34-66)
+          // Look for patterns like "Confirmation Ticket Aug 31 Hos." or "Ticket August the 31 Hos. + Golf"
+          if (j >= 34 && j <= 66) {
+            const hasHos = cell.includes('hos.');
+            const hasHosGolf = cell.includes('hos. + golf') || cell.includes('hos.+golf');
+            
+            if (hasHos || hasHosGolf) {
+              const dateInfo = parseDateFromHeader(cellOriginal);
+              if (dateInfo) {
+                presenceDayColumns.push({
+                  index: j,
+                  date: dateInfo.date,
+                  weekday: dateInfo.weekday,
+                  ticketType: hasHosGolf ? 'Hos. + Golf' : 'Hos.'
+                });
+                headerRowIndex = i;
+              }
+            }
+          }
         }
         
         // If we found key columns, stop looking
@@ -2161,7 +2418,7 @@ export default function SeatingManager() {
       }
       
       // First pass: count valid rows
-      const validRows: { name: string; notes: string; market: string; guestType: string }[] = [];
+      const validRows: { name: string; notes: string; market: string; guestType: string; phoneNumber: string; presenceDays: string }[] = [];
       const startRow = headerRowIndex >= 0 ? headerRowIndex + 1 : 0;
       
       for (let i = startRow; i < jsonData.length; i++) {
@@ -2172,12 +2429,21 @@ export default function SeatingManager() {
         let notes = '';
         let market = '';
         let guestType = '';
+        let phoneNumber = '';
+        const presenceDaysArr: PresenceDay[] = [];
         
-        // Build name from first name + last name or single name column
+        // Build name from last name, first name format (LastName, FirstName)
         if (columnIndices.firstName >= 0 && columnIndices.lastName >= 0) {
           const firstName = String(row[columnIndices.firstName] || '').trim();
           const lastName = String(row[columnIndices.lastName] || '').trim();
-          name = `${firstName} ${lastName}`.trim();
+          // Store as "LastName, FirstName"
+          if (lastName && firstName) {
+            name = `${lastName}, ${firstName}`;
+          } else if (lastName) {
+            name = lastName;
+          } else if (firstName) {
+            name = firstName;
+          }
         } else if (columnIndices.name >= 0) {
           name = String(row[columnIndices.name] || '').trim();
         } else if (columnIndices.lastName >= 0) {
@@ -2207,7 +2473,32 @@ export default function SeatingManager() {
           notes = String(row[1]).trim();
         }
         
-        validRows.push({ name, notes, market, guestType });
+        // Get phone number
+        if (columnIndices.phoneNumber >= 0) {
+          phoneNumber = String(row[columnIndices.phoneNumber] || '').trim();
+        }
+        
+        // Check presence day columns for this guest
+        for (const col of presenceDayColumns) {
+          const cellValue = String(row[col.index] || '').trim().toLowerCase();
+          // Check for "Yes", "Y", or "1"
+          if (cellValue === 'yes' || cellValue === 'y' || cellValue === '1' || cellValue === 'x') {
+            presenceDaysArr.push({
+              date: col.date,
+              weekday: col.weekday,
+              ticketType: col.ticketType
+            });
+          }
+        }
+        
+        validRows.push({ 
+          name, 
+          notes, 
+          market, 
+          guestType, 
+          phoneNumber,
+          presenceDays: presenceDaysArr.length > 0 ? JSON.stringify(presenceDaysArr) : ''
+        });
       }
       
       setImportProgress({ current: 0, total: validRows.length });
@@ -2219,12 +2510,19 @@ export default function SeatingManager() {
       for (let i = 0; i < validRows.length; i += batchSize) {
         const batch = validRows.slice(i, i + batchSize);
         
-        const batchPromises = batch.map(async ({ name, notes, market, guestType }) => {
+        const batchPromises = batch.map(async ({ name, notes, market, guestType, phoneNumber, presenceDays }) => {
           try {
             const response = await fetch('/api/guests', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name, notes, market, guestType })
+              body: JSON.stringify({ 
+                name, 
+                notes, 
+                market, 
+                guestType,
+                phoneNumber: phoneNumber || null,
+                presenceDays: presenceDays || null
+              })
             });
             return await response.json();
           } catch (error) {
@@ -3606,6 +3904,60 @@ export default function SeatingManager() {
 
   const currentService = services.find(s => s.id === selectedService)!;
 
+  // Show login screen if not authenticated
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-red-700 mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
+          <div className="bg-gradient-to-r from-red-700 to-red-800 p-8 text-center">
+            <h1 className="text-3xl font-bold text-white mb-2">OMEGA</h1>
+            <p className="text-red-200">Seating Manager</p>
+          </div>
+          <div className="p-8">
+            <h2 className="text-xl font-semibold text-gray-900 mb-6 text-center">Enter Password</h2>
+            <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
+              <div className="mb-4">
+                <input
+                  type="password"
+                  value={passwordInput}
+                  onChange={(e) => { setPasswordInput(e.target.value); setPasswordError(false); }}
+                  placeholder="Password"
+                  className={`w-full px-4 py-3 border-2 rounded-xl text-center text-lg focus:outline-none focus:ring-2 focus:ring-red-700 focus:border-red-700 transition ${
+                    passwordError ? 'border-red-500 bg-red-50' : 'border-gray-300'
+                  }`}
+                  autoFocus
+                />
+                {passwordError && (
+                  <p className="text-red-500 text-sm mt-2 text-center">Incorrect password. Please try again.</p>
+                )}
+              </div>
+              <button
+                type="submit"
+                className="w-full py-3 bg-red-700 text-white font-semibold rounded-xl hover:bg-red-800 transition shadow-lg"
+              >
+                Access Platform
+              </button>
+            </form>
+          </div>
+          <div className="bg-gray-50 px-8 py-4 text-center">
+            <p className="text-xs text-gray-500">Authorized personnel only</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -3672,14 +4024,14 @@ export default function SeatingManager() {
       </div>
 
       <header className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="bg-red-700 p-2 rounded-lg">
-                <Users className="text-white" size={24} />
+        <div className="max-w-7xl mx-auto px-2 sm:px-4 py-3 sm:py-4">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 sm:gap-0">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <div className="bg-red-700 p-1.5 sm:p-2 rounded-lg">
+                <Users className="text-white" size={20} />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">Seating Manager</h1>
+                <h1 className="text-lg sm:text-xl font-bold text-gray-900">Seating Manager</h1>
               </div>
             </div>
             {viewMode === 'manager' && (
@@ -3699,24 +4051,26 @@ export default function SeatingManager() {
                 )}
                 <button
                   onClick={() => setShowWeekOverview(true)}
-                  className="flex items-center gap-2 px-3 py-2 text-sm bg-red-50 text-red-800 hover:bg-red-200 rounded-lg transition"
+                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm bg-red-50 text-red-800 hover:bg-red-200 rounded-lg transition"
                 >
-                  <Calendar size={16} />
-                  Week Overview
+                  <Calendar size={14} />
+                  <span className="hidden sm:inline">Week Overview</span>
+                  <span className="sm:hidden">Week</span>
                 </button>
                 <button
                   onClick={() => setShowImport(true)}
-                  className="flex items-center gap-2 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition"
+                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm bg-gray-100 hover:bg-gray-200 rounded-lg transition"
                 >
-                  <Upload size={16} />
+                  <Upload size={14} />
                   Import
                 </button>
                 <button
                   onClick={() => setShowGuestForm(true)}
-                  className="flex items-center gap-2 px-3 py-2 text-sm bg-red-700 text-white hover:bg-red-800 rounded-lg transition"
+                  className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 text-xs sm:text-sm bg-red-700 text-white hover:bg-red-800 rounded-lg transition"
                 >
-                  <Plus size={16} />
-                  Add Guest
+                  <Plus size={14} />
+                  <span className="hidden sm:inline">Add Guest</span>
+                  <span className="sm:hidden">Add</span>
                 </button>
               </div>
             )}
@@ -3725,19 +4079,20 @@ export default function SeatingManager() {
       </header>
 
       <div className="bg-red-700">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex gap-1 overflow-x-auto py-2">
+        <div className="max-w-7xl mx-auto px-2 sm:px-4">
+          <div className="flex gap-0.5 sm:gap-1 overflow-x-auto py-1.5 sm:py-2">
             {DAYS.map(day => (
               <button
                 key={day.id}
                 onClick={() => setSelectedDay(day.id)}
-                className={`px-4 py-2 text-sm font-medium rounded-lg transition whitespace-nowrap ${
+                className={`px-2.5 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-medium rounded-lg transition whitespace-nowrap ${
                   selectedDay === day.id
                     ? 'bg-white text-red-700'
                     : 'text-red-50 hover:bg-red-700'
                 }`}
               >
-                {day.name}
+                <span className="sm:hidden">{day.short}</span>
+                <span className="hidden sm:inline">{day.name}</span>
               </button>
             ))}
             <div className="w-px bg-red-600 mx-2" />
@@ -3870,6 +4225,52 @@ export default function SeatingManager() {
                   <option value="guestType">Sort by Guest Type</option>
                 </select>
               </div>
+              
+              {/* Presence Day Filter */}
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-gray-700">Filter by Presence Day:</span>
+                {DAYS.map(day => {
+                  const isSelected = presenceDayFilter.includes(day.short);
+                  // Count guests with this presence day
+                  const count = guests.filter(g => {
+                    const weekdays = getPresenceWeekdays(g.presenceDays);
+                    return weekdays.includes(day.short);
+                  }).length;
+                  
+                  return (
+                    <button
+                      key={day.id}
+                      onClick={() => {
+                        setPresenceDayFilter(prev => 
+                          isSelected 
+                            ? prev.filter(d => d !== day.short)
+                            : [...prev, day.short]
+                        );
+                      }}
+                      className={`px-3 py-1.5 text-sm rounded-lg border transition flex items-center gap-1.5 ${
+                        isSelected
+                          ? 'bg-red-700 text-white border-red-700'
+                          : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                      }`}
+                    >
+                      {day.short}
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                        isSelected ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+                {presenceDayFilter.length > 0 && (
+                  <button
+                    onClick={() => setPresenceDayFilter([])}
+                    className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
             </div>
             
             <div className="p-4">
@@ -3890,6 +4291,13 @@ export default function SeatingManager() {
                     if (guestFilter === 'assigned') return isAssigned;
                     if (guestFilter === 'unassigned') return !isAssigned;
                     return true;
+                  })
+                  .filter(g => {
+                    // Presence day filter
+                    if (presenceDayFilter.length === 0) return true;
+                    const weekdays = getPresenceWeekdays(g.presenceDays);
+                    // Guest must have at least one of the selected days
+                    return presenceDayFilter.some(day => weekdays.includes(day));
                   })
                   .sort((a, b) => {
                     if (guestSort === 'name') {
@@ -3937,6 +4345,18 @@ export default function SeatingManager() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-1 flex-wrap">
                               <h3 className="font-semibold text-gray-900">{guest.name}</h3>
+                              {/* Presence day tags */}
+                              {(() => {
+                                const weekdays = getPresenceWeekdays(guest.presenceDays);
+                                if (weekdays.length > 0) {
+                                  return (
+                                    <span className="text-xs px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full font-medium border border-blue-200">
+                                      {weekdays.join(', ')}
+                                    </span>
+                                  );
+                                }
+                                return null;
+                              })()}
                               {guest.isManuallyAdded && (
                                 <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-600 rounded-full font-medium" title="Added manually after import">
                                   + Added
@@ -3949,7 +4369,7 @@ export default function SeatingManager() {
                               )}
                               {isDuplicate && (
                                 <span className="text-xs px-2 py-0.5 bg-yellow-100 text-yellow-700 rounded-full font-medium" title="Duplicate name detected">
-                                  ⚠️ Duplicate
+                                  Duplicate
                                 </span>
                               )}
                             </div>
@@ -4025,6 +4445,11 @@ export default function SeatingManager() {
                   if (guestFilter === 'assigned') return isAssigned;
                   if (guestFilter === 'unassigned') return !isAssigned;
                   return true;
+                })
+                .filter(g => {
+                  if (presenceDayFilter.length === 0) return true;
+                  const weekdays = getPresenceWeekdays(g.presenceDays);
+                  return presenceDayFilter.some(day => weekdays.includes(day));
                 }).length === 0 && (
                 <div className="text-center py-12 text-gray-500">
                   <Users size={48} className="mx-auto mb-3 opacity-20" />
@@ -4105,7 +4530,7 @@ export default function SeatingManager() {
                       </div>
                     </div>
                     
-                    <div className="p-2 overflow-y-auto" style={{maxHeight: 'calc(100vh - 380px)'}}>
+                    <div className="p-2 overflow-y-auto max-h-[50vh] lg:max-h-[calc(100vh-380px)]">
                       {groups
                         .filter(g => 
                           g.leadGuestName?.toLowerCase().includes(groupSearchTerm.toLowerCase()) ||
@@ -4403,7 +4828,7 @@ export default function SeatingManager() {
                   </select>
                 </div>
               </div>
-              <div className="p-2 overflow-y-auto" style={{maxHeight: 'calc(100vh - 380px)'}}>
+              <div className="p-2 overflow-y-auto max-h-[50vh] lg:max-h-[calc(100vh-380px)]">
                 {guests
                   .filter(g => g.name.toLowerCase().includes(searchTerm.toLowerCase()))
                   .filter(g => {
@@ -5064,20 +5489,7 @@ export default function SeatingManager() {
                                             <button
                                               onClick={(e) => {
                                                 e.stopPropagation();
-                                                const arrived = hasArrived(guest.id);
-                                                const departed = hasDeparted(guest.id, selectedService);
-                                                
-                                                if (!arrived && !departed) {
-                                                  // Not arrived -> Arrived
-                                                  toggleArrival(guest.id);
-                                                } else if (arrived && !departed) {
-                                                  // Arrived -> Departed
-                                                  toggleDeparture(guest.id, selectedService);
-                                                } else if (departed) {
-                                                  // Departed -> Reset to not arrived
-                                                  toggleDeparture(guest.id, selectedService); // Remove departed status
-                                                  toggleArrival(guest.id); // Remove arrived status
-                                                }
+                                                cycleGuestStatus(guest.id, selectedService);
                                               }}
                                               className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition ${
                                                 hasDeparted(guest.id, selectedService)
@@ -5243,79 +5655,181 @@ export default function SeatingManager() {
       )}
 
       {showGuestForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
-            <div className="p-4 border-b flex items-center justify-between">
-              <h3 className="font-semibold">Add New Guest</h3>
-              <button onClick={() => setShowGuestForm(false)} className="text-gray-400 hover:text-gray-600">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between bg-gradient-to-r from-red-700 to-red-800 text-white">
+              <h3 className="font-semibold text-lg">Add New Guest</h3>
+              <button onClick={() => setShowGuestForm(false)} className="text-white/80 hover:text-white">
                 <X size={20} />
               </button>
             </div>
-            <div className="p-4 space-y-4">
+            <div className="p-6 space-y-4 overflow-y-auto flex-1">
+              {/* Name fields */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Last Name</label>
+                  <input
+                    type="text"
+                    value={newGuest.lastName}
+                    onChange={(e) => setNewGuest({ ...newGuest, lastName: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="Last name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">First Name</label>
+                  <input
+                    type="text"
+                    value={newGuest.firstName}
+                    onChange={(e) => setNewGuest({ ...newGuest, firstName: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="First name"
+                  />
+                </div>
+              </div>
+              
+              {/* Or use full name */}
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-300" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="px-2 bg-white text-gray-500">or enter full name</span>
+                </div>
+              </div>
+              
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Full Name (Last, First)</label>
                 <input
                   type="text"
                   value={newGuest.name}
                   onChange={(e) => setNewGuest({ ...newGuest, name: e.target.value })}
                   className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
-                  placeholder="Guest name"
+                  placeholder="e.g., Smith, John"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes (optional)</label>
-                <input
-                  type="text"
-                  value={newGuest.notes}
-                  onChange={(e) => setNewGuest({ ...newGuest, notes: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
-                  placeholder="Dietary restrictions, VIP, etc."
-                />
-              </div>
-              <p className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
-                💡 Tip: To create a group, first add all guests individually, then use the Groups tab to link them together.
-              </p>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Service (optional)</label>
-                <select
-                  value={newGuest.assignedService || ''}
-                  onChange={(e) => setNewGuest({ ...newGuest, assignedService: e.target.value ? parseInt(e.target.value) : null })}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
-                >
-                  <option value="">No assignment</option>
-                  {services.map(service => (
-                    <option key={service.id} value={service.id}>
-                      {service.name} ({service.time})
-                    </option>
-                  ))}
-                </select>
-              </div>
-              {newGuest.assignedService && (
+
+              {/* Additional details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Table (optional)</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Market</label>
+                  <input
+                    type="text"
+                    value={newGuest.market}
+                    onChange={(e) => setNewGuest({ ...newGuest, market: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="e.g., Corporate, VIP"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Guest Type</label>
+                  <input
+                    type="text"
+                    value={newGuest.guestType}
+                    onChange={(e) => setNewGuest({ ...newGuest, guestType: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="e.g., Regular, Premium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    value={newGuest.phoneNumber}
+                    onChange={(e) => setNewGuest({ ...newGuest, phoneNumber: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="+41 XX XXX XX XX"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                  <input
+                    type="text"
+                    value={newGuest.notes}
+                    onChange={(e) => setNewGuest({ ...newGuest, notes: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="Dietary restrictions, allergies, etc."
+                  />
+                </div>
+              </div>
+
+              {/* Presence Days */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Presence Days</label>
+                <div className="flex flex-wrap gap-2">
+                  {DAYS.map(day => {
+                    const isSelected = newGuest.presenceDays.includes(day.short);
+                    return (
+                      <button
+                        key={day.id}
+                        type="button"
+                        onClick={() => {
+                          const newDays = isSelected 
+                            ? newGuest.presenceDays.filter(d => d !== day.short)
+                            : [...newGuest.presenceDays, day.short];
+                          setNewGuest({ ...newGuest, presenceDays: newDays });
+                        }}
+                        className={`px-3 py-1.5 rounded-lg text-sm border transition ${
+                          isSelected
+                            ? 'bg-red-700 text-white border-red-700'
+                            : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
+                        }`}
+                      >
+                        {day.short}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                Tip: To create a group, first add all guests individually, then use the Groups tab to link them together.
+              </p>
+
+              {/* Assignment */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Service (optional)</label>
                   <select
-                    value={newGuest.assignedTable || ''}
-                    onChange={(e) => setNewGuest({ ...newGuest, assignedTable: e.target.value ? parseInt(e.target.value) : null })}
+                    value={newGuest.assignedService || ''}
+                    onChange={(e) => setNewGuest({ ...newGuest, assignedService: e.target.value ? parseInt(e.target.value) : null })}
                     className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
                   >
                     <option value="">No assignment</option>
-                    {[...tables].sort((a, b) => 
-                      a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
-                    ).map(table => {
-                      const occupancy = getTableOccupancy(table.id, newGuest.assignedService!);
-                      const available = table.capacity - occupancy;
-                      const canFit = available >= 1;
-                      return (
-                        <option key={table.id} value={table.id} disabled={!canFit}>
-                          {table.name} ({available} seats available)
-                        </option>
-                      );
-                    })}
+                    {services.map(service => (
+                      <option key={service.id} value={service.id}>
+                        {service.name} ({service.time})
+                      </option>
+                    ))}
                   </select>
                 </div>
-              )}
+                {newGuest.assignedService && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Assign to Table (optional)</label>
+                    <select
+                      value={newGuest.assignedTable || ''}
+                      onChange={(e) => setNewGuest({ ...newGuest, assignedTable: e.target.value ? parseInt(e.target.value) : null })}
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    >
+                      <option value="">No assignment</option>
+                      {[...tables].sort((a, b) => 
+                        a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' })
+                      ).map(table => {
+                        const occupancy = getTableOccupancy(table.id, newGuest.assignedService!);
+                        const available = table.capacity - occupancy;
+                        const canFit = available >= 1;
+                        return (
+                          <option key={table.id} value={table.id} disabled={!canFit}>
+                            {table.name} ({available} seats available)
+                          </option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="p-4 border-t flex justify-end gap-2">
+            <div className="p-4 border-t flex justify-end gap-2 bg-gray-50">
               <button
                 onClick={() => setShowGuestForm(false)}
                 className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
@@ -5333,37 +5847,127 @@ export default function SeatingManager() {
         </div>
       )}
 
+      {/* Guest Profile Modal */}
       {showEditGuest && editingGuest && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
-            <div className="p-4 border-b flex items-center justify-between">
-              <h3 className="font-semibold">Edit Guest</h3>
-              <button onClick={() => { setShowEditGuest(false); setEditingGuest(null); }} className="text-gray-400 hover:text-gray-600">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="p-4 border-b flex items-center justify-between bg-gradient-to-r from-red-700 to-red-800 text-white">
+              <h3 className="font-semibold text-lg">Guest Profile</h3>
+              <button onClick={() => { setShowEditGuest(false); setEditingGuest(null); }} className="text-white/80 hover:text-white">
                 <X size={20} />
               </button>
             </div>
-            <div className="p-4 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-                <input
-                  type="text"
-                  value={editingGuest.name}
-                  onChange={(e) => setEditingGuest({ ...editingGuest, name: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
-                />
+            <div className="p-6 space-y-6 overflow-y-auto flex-1">
+              {/* Name and basic info */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
+                  <input
+                    type="text"
+                    value={editingGuest.name}
+                    onChange={(e) => setEditingGuest({ ...editingGuest, name: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="Last Name, First Name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Market</label>
+                  <input
+                    type="text"
+                    value={editingGuest.market || ''}
+                    onChange={(e) => setEditingGuest({ ...editingGuest, market: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="e.g., Corporate, VIP"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Guest Type</label>
+                  <input
+                    type="text"
+                    value={editingGuest.guestType || ''}
+                    onChange={(e) => setEditingGuest({ ...editingGuest, guestType: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="e.g., Regular, Premium"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Phone Number</label>
+                  <input
+                    type="tel"
+                    value={editingGuest.phoneNumber || ''}
+                    onChange={(e) => setEditingGuest({ ...editingGuest, phoneNumber: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="+41 XX XXX XX XX"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                  <input
+                    type="text"
+                    value={editingGuest.notes}
+                    onChange={(e) => setEditingGuest({ ...editingGuest, notes: e.target.value })}
+                    className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                    placeholder="Dietary restrictions, allergies, etc."
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <input
-                  type="text"
-                  value={editingGuest.notes}
-                  onChange={(e) => setEditingGuest({ ...editingGuest, notes: e.target.value })}
-                  className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
-                  placeholder="Dietary restrictions, VIP, etc."
-                />
+
+              {/* Presence Days */}
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Presence Days</label>
+                {(() => {
+                  const presenceDays = parsePresenceDays(editingGuest.presenceDays);
+                  if (presenceDays.length === 0) {
+                    return (
+                      <p className="text-sm text-gray-500 italic">No presence days recorded</p>
+                    );
+                  }
+                  return (
+                    <div className="flex flex-wrap gap-2">
+                      {presenceDays.map((day, idx) => (
+                        <div 
+                          key={idx} 
+                          className="px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-sm"
+                        >
+                          <span className="font-medium text-blue-800">{day.weekday}</span>
+                          <span className="text-blue-600 ml-1">({day.date})</span>
+                          {day.ticketType && (
+                            <span className="text-xs ml-2 px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded">
+                              {day.ticketType}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
-              
-              {/* Show groups this guest is part of */}
+
+              {/* Tags Display */}
+              <div className="flex flex-wrap gap-2">
+                {editingGuest.market && (
+                  <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-sm font-medium">
+                    {editingGuest.market}
+                  </span>
+                )}
+                {editingGuest.guestType && (
+                  <span className="px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-sm font-medium">
+                    {editingGuest.guestType}
+                  </span>
+                )}
+                {editingGuest.isManuallyAdded && (
+                  <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm font-medium">
+                    Manually Added
+                  </span>
+                )}
+                {editingGuest.isGhost && (
+                  <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm font-medium">
+                    Ghost
+                  </span>
+                )}
+              </div>
+
+              {/* Groups */}
               {(() => {
                 const ledGroups = getGroupsAsLead(editingGuest.id);
                 const memberOfGroups = getGroupsAsMember(editingGuest.id);
@@ -5378,6 +5982,7 @@ export default function SeatingManager() {
                           <Users size={14} className="text-blue-600" />
                           <span className="flex-1 text-blue-900">{g.name || `${g.leadGuestName}'s Group`}</span>
                           <span className="text-xs px-2 py-0.5 bg-blue-100 text-blue-700 rounded-full">Lead</span>
+                          <span className="text-xs text-gray-500">{g.members.length + 1} members</span>
                         </div>
                       ))}
                       {memberOfGroups.map(g => (
@@ -5394,8 +5999,153 @@ export default function SeatingManager() {
                   </div>
                 );
               })()}
+
+              {/* SMS Confirmation Settings */}
+              <div className="border-t pt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-3">SMS Confirmation Settings</label>
+                
+                <div className="space-y-4">
+                  {/* Enable SMS */}
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id="smsEnabled"
+                      checked={editingGuest.smsEnabled || false}
+                      onChange={(e) => setEditingGuest({ ...editingGuest, smsEnabled: e.target.checked })}
+                      className="w-4 h-4 text-red-700 border-gray-300 rounded focus:ring-red-700"
+                    />
+                    <label htmlFor="smsEnabled" className="text-sm text-gray-700">
+                      Enable SMS confirmations for this guest
+                    </label>
+                  </div>
+
+                  {editingGuest.smsEnabled && (
+                    <>
+                      {/* Language Selection */}
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-1">SMS Language</label>
+                        <select
+                          value={editingGuest.smsLanguage || 'en'}
+                          onChange={(e) => setEditingGuest({ ...editingGuest, smsLanguage: e.target.value })}
+                          className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-red-700 focus:border-red-700"
+                        >
+                          <option value="en">English</option>
+                          <option value="fr">Francais</option>
+                          <option value="de">Deutsch</option>
+                        </select>
+                      </div>
+
+                      {/* Day Selection for SMS */}
+                      <div>
+                        <label className="block text-sm text-gray-600 mb-2">Send SMS for these days:</label>
+                        {(() => {
+                          const presenceDays = parsePresenceDays(editingGuest.presenceDays);
+                          const selectedSmsDays: string[] = editingGuest.smsDays ? JSON.parse(editingGuest.smsDays) : [];
+                          
+                          if (presenceDays.length === 0) {
+                            return (
+                              <p className="text-sm text-gray-500 italic">No presence days available</p>
+                            );
+                          }
+                          
+                          return (
+                            <div className="flex flex-wrap gap-2">
+                              {presenceDays.map((day, idx) => {
+                                const isSelected = selectedSmsDays.includes(day.date);
+                                return (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => {
+                                      const newDays = isSelected 
+                                        ? selectedSmsDays.filter(d => d !== day.date)
+                                        : [...selectedSmsDays, day.date];
+                                      setEditingGuest({ ...editingGuest, smsDays: JSON.stringify(newDays) });
+                                    }}
+                                    className={`px-3 py-1.5 rounded-lg text-sm border transition ${
+                                      isSelected
+                                        ? 'bg-red-700 text-white border-red-700'
+                                        : 'bg-gray-50 text-gray-700 border-gray-300 hover:bg-gray-100'
+                                    }`}
+                                  >
+                                    {day.weekday} ({day.date})
+                                  </button>
+                                );
+                              })}
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const allDays = presenceDays.map(d => d.date);
+                                  setEditingGuest({ ...editingGuest, smsDays: JSON.stringify(allDays) });
+                                }}
+                                className="px-3 py-1.5 rounded-lg text-sm border border-gray-300 bg-gray-50 text-gray-700 hover:bg-gray-100"
+                              >
+                                Select All
+                              </button>
+                            </div>
+                          );
+                        })()}
+                      </div>
+
+                      {!editingGuest.phoneNumber && (
+                        <p className="text-sm text-amber-600 bg-amber-50 p-2 rounded-lg">
+                          Please add a phone number to enable SMS confirmations
+                        </p>
+                      )}
+
+                      {/* Send SMS Now Button */}
+                      {editingGuest.phoneNumber && (
+                        <div className="pt-2 border-t">
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              const selectedSmsDays: string[] = editingGuest.smsDays ? JSON.parse(editingGuest.smsDays) : [];
+                              if (selectedSmsDays.length === 0) {
+                                showNotification('Please select at least one day for SMS', 'error');
+                                return;
+                              }
+                              
+                              try {
+                                const response = await fetch('/api/sms', {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    phoneNumber: editingGuest.phoneNumber,
+                                    guestName: editingGuest.name,
+                                    day: selectedSmsDays.join(', '),
+                                    service: services.find(s => s.id === selectedService)?.name || '',
+                                    language: editingGuest.smsLanguage || 'en',
+                                    messageType: 'confirmation'
+                                  })
+                                });
+                                
+                                const result = await response.json();
+                                
+                                if (result.success) {
+                                  showNotification(result.mock ? 'SMS would be sent (Twilio not configured)' : 'SMS sent successfully', 'success');
+                                } else {
+                                  showNotification(result.error || 'Failed to send SMS', 'error');
+                                }
+                              } catch (error) {
+                                console.error('SMS error:', error);
+                                showNotification('Failed to send SMS', 'error');
+                              }
+                            }}
+                            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center justify-center gap-2"
+                          >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                            </svg>
+                            Send SMS Confirmation Now
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="p-4 border-t flex justify-end gap-2">
+            <div className="p-4 border-t flex justify-end gap-2 bg-gray-50">
               <button
                 onClick={() => { setShowEditGuest(false); setEditingGuest(null); }}
                 className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"

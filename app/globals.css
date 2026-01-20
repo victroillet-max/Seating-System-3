@@ -1,3 +1,54 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Responsive scaling for room map */
+@layer utilities {
+  .room-map-container {
+    @apply w-full overflow-hidden rounded-xl;
+  }
+}
+
+/* Responsive height utilities */
+@media (max-height: 700px) {
+  .responsive-room-map {
+    max-height: 350px;
+  }
+}
+
+@media (min-height: 701px) and (max-height: 900px) {
+  .responsive-room-map {
+    max-height: 450px;
+  }
+}
+
+@media (min-height: 901px) {
+  .responsive-room-map {
+    max-height: 550px;
+  }
+}
+
+/* Ensure content doesn't overflow viewport */
+html, body {
+  overflow-x: hidden;
+  min-height: 100vh;
+}
+
+/* Scrollbar styling for better UX */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 6px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 3px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: #a1a1a1;
+}
