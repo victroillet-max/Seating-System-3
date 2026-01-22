@@ -3921,7 +3921,7 @@ export default function SeatingManager() {
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
           <div className="bg-gradient-to-r from-red-700 to-red-800 p-8 text-center">
-            <h1 className="text-3xl font-bold text-white mb-2">OMEGA</h1>
+            <h1 className="text-3xl font-bold text-white mb-2">Seating Manager</h1>
             <p className="text-red-200">Seating Manager</p>
           </div>
           <div className="p-8">
